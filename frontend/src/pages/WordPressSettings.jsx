@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { wordpressAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 const WordPressSettings = () => {
-  const [config, setConfig] = useState(null);
+  const toast = useToast();
   const [formData, setFormData] = useState({
     siteUrl: '',
     username: '',
@@ -12,60 +13,68 @@ const WordPressSettings = () => {
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
-    fetchConfig();
+    loadFromLocalStorage();
   }, []);
 
-  const fetchConfig = async () => {
+  const loadFromLocalStorage = () => {
     try {
-      const response = await wordpressAPI.getConfig();
-      if (response.data.data) {
-        setConfig(response.data.data);
-        setFormData({
-          siteUrl: response.data.data.siteUrl,
-          username: response.data.data.username,
-          appPassword: '',
-        });
+      const saved = localStorage.getItem('wpConfig');
+      if (saved) {
+        const config = JSON.parse(saved);
+        setFormData(config);
+        setIsSaved(true);
       }
       setLoading(false);
     } catch (error) {
-      console.log('No config found');
+      console.error('Error loading from localStorage:', error);
       setLoading(false);
     }
   };
 
-  const handleSave = async (e) => {
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+  };
+
+  const handleSave = (e) => {
     e.preventDefault();
+    if (!formData.siteUrl || !formData.username || !formData.appPassword) {
+      toast.showToast('Please fill all required fields', 'warning');
+      return;
+    }
+
     setSaving(true);
     try {
-      await wordpressAPI.saveConfig(formData);
-      setTestResult({ success: true, message: 'Configuration saved successfully.' });
-      setTimeout(() => fetchConfig(), 500);
+      localStorage.setItem('wpConfig', JSON.stringify(formData));
+      setIsSaved(true);
+      toast.showToast('✅ WordPress credentials saved locally in browser', 'success');
     } catch (error) {
-      console.error('Error saving config:', error);
-      setTestResult({
-        success: false,
-        message: error.response?.data?.message || 'Failed to save configuration',
-      });
+      console.error('Error saving to localStorage:', error);
+      toast.showToast('Failed to save configuration', 'error');
     } finally {
       setSaving(false);
     }
   };
 
   const handleTest = async () => {
+    if (!formData.siteUrl || !formData.username || !formData.appPassword) {
+      toast.showToast('Please fill all required fields', 'warning');
+      return;
+    }
+
     setTesting(true);
     setTestResult(null);
     try {
-      const payload = config && !formData.appPassword?.trim()
-        ? { configId: config._id }
-        : formData;
-      const response = await wordpressAPI.testConnection(payload);
+      const response = await wordpressAPI.testConnection(formData);
       if (response.data.success) {
         setTestResult({
           success: true,
-          message: `Connection successful. Logged in as: ${response.data.user}`,
+          message: `✅ Connection successful. Logged in as: ${response.data.user}`,
         });
+        toast.showToast('WordPress connection successful!', 'success');
       } else {
         setTestResult({
           success: false,
@@ -81,12 +90,22 @@ const WordPressSettings = () => {
     }
   };
 
+  const handleClear = () => {
+    if (window.confirm('Are you sure? This will clear your WordPress credentials from this browser.')) {
+      localStorage.removeItem('wpConfig');
+      setFormData({ siteUrl: '', username: '', appPassword: '' });
+      setIsSaved(false);
+      setTestResult(null);
+      toast.showToast('WordPress credentials cleared', 'info');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-16 w-16 border-b-4 border-cyan-500"></div>
-          <p className="mt-4 text-slate-400 font-semibold">Loading settings...</p>
+          <p className="mt-4 text-slate-400 font-semibold">Loading...</p>
         </div>
       </div>
     );
@@ -98,18 +117,26 @@ const WordPressSettings = () => {
         <div className="mb-12 animate-fade">
           <h1 className="text-4xl font-bold text-slate-100">WordPress Settings</h1>
           <p className="text-slate-400 mt-2">Configure your WordPress blog for content publishing</p>
+          <p className="text-blue-300 text-sm mt-3">💾 Credentials stored locally in your browser (not in database)</p>
         </div>
 
         <div className="card-glass shadow-soft rounded-2xl p-8 animate-fade space-y-8">
           <form onSubmit={handleSave} className="space-y-6">
+            {isSaved && (
+              <div className="p-4 bg-emerald-950/40 border-l-4 border-emerald-500 rounded-lg">
+                <p className="text-emerald-200 font-semibold">✓ Credentials saved locally in this browser</p>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-semibold text-slate-200 mb-3">
                 WordPress Site URL <span className="text-red-500">*</span>
               </label>
               <input
                 type="url"
+                name="siteUrl"
                 value={formData.siteUrl}
-                onChange={(e) => setFormData({ ...formData, siteUrl: e.target.value })}
+                onChange={handleInputChange}
                 className="input-modern"
                 placeholder="https://yoursite.com"
                 required
@@ -126,8 +153,9 @@ const WordPressSettings = () => {
               </label>
               <input
                 type="text"
+                name="username"
                 value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                onChange={handleInputChange}
                 className="input-modern"
                 placeholder="admin"
                 required
@@ -144,15 +172,16 @@ const WordPressSettings = () => {
               </label>
               <input
                 type="password"
+                name="appPassword"
                 value={formData.appPassword}
-                onChange={(e) => setFormData({ ...formData, appPassword: e.target.value })}
+                onChange={handleInputChange}
                 className="input-modern"
-                placeholder={config ? "Re-enter to update (leave blank to keep existing)" : "xxxx xxxx xxxx xxxx"}
-                required={!config}
+                placeholder="xxxx xxxx xxxx xxxx"
+                required
                 disabled={testing || saving}
               />
               <p className="text-xs text-slate-400 mt-2">
-                Generate in WordPress: Users → Profile → Application Passwords. {config && "Re-enter when updating."}
+                Generate in WordPress: Users → Profile → Application Passwords
               </p>
             </div>
 
@@ -172,7 +201,7 @@ const WordPressSettings = () => {
               <button
                 type="button"
                 onClick={handleTest}
-                disabled={testing || (!config && (!formData.siteUrl || !formData.username || !formData.appPassword))}
+                disabled={testing || !formData.siteUrl || !formData.username || !formData.appPassword}
                 className="flex-1 px-4 py-3 bg-slate-800 text-cyan-300 rounded-lg font-semibold border border-slate-700 hover:bg-slate-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {testing ? 'Testing...' : 'Test Connection'}
@@ -182,21 +211,19 @@ const WordPressSettings = () => {
                 disabled={saving}
                 className="flex-1 btn-primary py-3 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {saving ? 'Saving...' : 'Save Configuration'}
+                {saving ? 'Saving...' : 'Save Locally'}
               </button>
+              {isSaved && (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="flex-1 px-4 py-3 bg-red-900 text-red-100 rounded-lg font-semibold hover:bg-red-800 transition-all duration-300"
+                >
+                  Clear
+                </button>
+              )}
             </div>
           </form>
-
-          {config && config.testStatus === 'success' && (
-            <div className="p-4 bg-emerald-950/40 border-l-4 border-emerald-500 rounded-lg">
-              <h3 className="font-semibold text-emerald-200 mb-3">Configuration Active</h3>
-              <div className="space-y-2 text-emerald-100 text-sm">
-                <p><span className="font-semibold">Site:</span> {config.siteUrl}</p>
-                <p><span className="font-semibold">User:</span> {config.username}</p>
-                <p><span className="font-semibold">Last Tested:</span> {new Date(config.lastTested).toLocaleString()}</p>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="mt-8 p-6 bg-slate-900 border-l-4 border-cyan-500 rounded-lg animate-fade">
@@ -210,12 +237,14 @@ const WordPressSettings = () => {
             <li>6. Click Test Connection</li>
           </ol>
 
-          <div className="mt-6 p-4 bg-amber-950/40 border-l-4 border-amber-500 rounded-lg">
-            <p className="text-amber-200 font-semibold">Important Notes</p>
-            <ul className="text-amber-100 text-sm mt-2 space-y-1">
-              <li>Application password is different from login password</li>
-              <li>Keep spaces if WordPress gives password with spaces</li>
-              <li>Test connection before processing Excel files</li>
+          <div className="mt-6 p-4 bg-blue-950/40 border-l-4 border-blue-500 rounded-lg">
+            <p className="text-blue-200 font-semibold">🔒 Security Notes</p>
+            <ul className="text-blue-100 text-sm mt-2 space-y-1">
+              <li>✅ Credentials stored ONLY in your browser (localStorage)</li>
+              <li>✅ NOT stored in any database</li>
+              <li>✅ Not shared with other users</li>
+              <li>✅ Cleared when you click "Clear" or clear browser data</li>
+              <li>⚠️ Different for each browser/device</li>
             </ul>
           </div>
         </div>

@@ -10,7 +10,6 @@ const Navbar = () => {
   const navLinks = [
     { path: '/', label: 'Templates' },
     { path: '/wordpress', label: 'WordPress' },
-    { path: '/woocommerce', label: 'WooCommerce' },
     { path: '/process', label: 'Process' },
     { path: '/history', label: 'History' },
   ];

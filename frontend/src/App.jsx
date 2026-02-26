@@ -5,7 +5,6 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import Navbar from './components/Navbar';
 import Templates from './pages/Templates';
 import WordPressSettings from './pages/WordPressSettings';
-import WooCommerceSettings from './pages/WooCommerceSettings';
 import ProcessExcel from './pages/ProcessExcel';
 import Results from './pages/Results';
 import History from './pages/History';
@@ -23,7 +22,6 @@ function App() {
               <Routes>
                 <Route path="/" element={<Templates />} />
                 <Route path="/wordpress" element={<WordPressSettings />} />
-                <Route path="/woocommerce" element={<WooCommerceSettings />} />
                 <Route path="/process" element={<ProcessExcel />} />
                 <Route path="/results/:id" element={<Results />} />
                 <Route path="/history" element={<History />} />

@@ -58,19 +58,40 @@ const createProduct = async (config, productData) => {
     const url = `${base}/wp-json/wc/v3/products`;
     const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     
+    // Build payload - ONLY send fields that WooCommerce recognizes
     const payload = {
-      name: productData.title || productData.name,
-      description: productData.description || productData.content,
-      short_description: productData.shortDescription || '',
-      price: productData.price,
-      regular_price: productData.regularPrice || productData.price,
-      sale_price: productData.salePrice || null,
+      name: productData.title || productData.name || 'Product',
+      description: productData.description || productData.content || '',
       sku: productData.sku || `product-${Date.now()}`,
-      stock_quantity: productData.stockQuantity || 999,
       status: 'draft',
-      type: 'simple',
-      meta_data: productData.meta || []
+      type: 'simple'
     };
+    
+    // ALWAYS add price - it's required
+    if (productData.price) {
+      const priceNum = parseFloat(productData.price);
+      if (!isNaN(priceNum) && priceNum > 0) {
+        payload.price = priceNum.toString(); // Send as string, WC will handle it
+      }
+    }
+    
+    // Add stock if provided
+    if (productData.stockQuantity) {
+      const stockNum = parseInt(productData.stockQuantity);
+      if (!isNaN(stockNum)) {
+        payload.stock_quantity = stockNum;
+      }
+    }
+    
+    // Add short description if provided
+    if (productData.shortDescription) {
+      payload.short_description = productData.shortDescription;
+    }
+
+    // Add Yoast SEO meta data if provided
+    if (productData.yoastMeta && Array.isArray(productData.yoastMeta) && productData.yoastMeta.length > 0) {
+      payload.meta_data = productData.yoastMeta;
+    }
     
     // Add category if provided
     if (productData.categoryId) {
@@ -78,7 +99,7 @@ const createProduct = async (config, productData) => {
     }
     
     // Add images if provided
-    if (productData.images && Array.isArray(productData.images)) {
+    if (productData.images && Array.isArray(productData.images) && productData.images.length > 0) {
       payload.images = productData.images;
     }
     

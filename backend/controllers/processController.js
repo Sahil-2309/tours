@@ -14,6 +14,7 @@ const { marked } = require('marked');
 const processExcel = async (req, res) => {
   try {
     const { templateId, postType } = req.body;
+    const { wpSiteUrl, wpUsername, wpAppPassword } = req.body;
     const file = req.file;
     
     if (!file) {
@@ -40,22 +41,40 @@ const processExcel = async (req, res) => {
     let wooConfig = null;
     
     if (configuredPostType === 'wordpress' || configuredPostType === 'both') {
-      wpConfig = await WordPressConfig.findOne({ isActive: true });
-      if (!wpConfig) {
-        return res.status(404).json({
+      // Get WordPress config from request (from browser localStorage)
+      if (!wpSiteUrl || !wpUsername || !wpAppPassword) {
+        return res.status(400).json({
           success: false,
-          message: 'WordPress configuration not found. Please configure WordPress first.'
+          message: 'WordPress credentials required. Please configure WordPress Settings first.'
         });
       }
+      
+      wpConfig = {
+        siteUrl: wpSiteUrl,
+        username: wpUsername,
+        appPassword: wpAppPassword
+      };
     }
     
     if (configuredPostType === 'woocommerce' || configuredPostType === 'both') {
+      // Try to get from database first, then fall back to .env
       wooConfig = await WooCommerceConfig.findOne({ isActive: true });
+      
       if (!wooConfig) {
-        return res.status(404).json({
-          success: false,
-          message: 'WooCommerce configuration not found. Please configure WooCommerce first.'
-        });
+        // Check if .env variables are available
+        if (process.env.WOOCOMMERCE_SITE_URL && process.env.WOOCOMMERCE_CONSUMER_KEY && process.env.WOOCOMMERCE_CONSUMER_SECRET) {
+          wooConfig = {
+            siteUrl: process.env.WOOCOMMERCE_SITE_URL,
+            consumerKey: process.env.WOOCOMMERCE_CONSUMER_KEY,
+            consumerSecret: process.env.WOOCOMMERCE_CONSUMER_SECRET,
+            source: 'env'
+          };
+        } else {
+          return res.status(404).json({
+            success: false,
+            message: 'WooCommerce configuration not found. Add WOOCOMMERCE_SITE_URL, WOOCOMMERCE_CONSUMER_KEY, WOOCOMMERCE_CONSUMER_SECRET to .env file or configure via Settings.'
+          });
+        }
       }
     }
     
@@ -108,6 +127,13 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
   const successRows = [];
   
   for (let i = 0; i < rows.length; i++) {
+    // Check if process should be stopped
+    const processDoc = await ProcessHistory.findById(processHistoryId);
+    if (processDoc && processDoc.shouldStop) {
+      console.log('🛑 Processing stopped by user');
+      break;
+    }
+    
     try {
       const rowNumber = i + 1;
       const rowData = rows[i];
@@ -160,29 +186,34 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
           throw new Error('Price field is required for WooCommerce products');
         }
 
+        // Build Yoast SEO meta data for WooCommerce
+        const yoastMeta = [
+          {
+            key: '_yoast_wpseo_title',
+            value: rowData.seo['Meta Title']
+          },
+          {
+            key: '_yoast_wpseo_metadesc',
+            value: rowData.seo['Meta Description']
+          },
+          {
+            key: '_yoast_wpseo_focuskw',
+            value: rowData.seo['Focus Keywords']
+          }
+        ];
+
         const productData = {
           title: rowData.seo['Meta Title'],
           name: rowData.seo['Meta Title'],
           description: htmlContent,
           price: rowData.product['Price'],
-          regularPrice: rowData.product['Regular Price'] || rowData.product['Price'],
-          salePrice: rowData.product['Sale Price'] || null,
           sku: rowData.product['SKU'] || rowData.seo['Slug'],
-          stockQuantity: rowData.product['Stock Quantity'] || 999,
-          meta: [{
-            key: '_yoast_wpseo_title',
-            value: rowData.seo['Meta Title']
-          }, {
-            key: '_yoast_wpseo_metadesc',
-            value: rowData.seo['Meta Description']
-          }, {
-            key: '_yoast_wpseo_focuskw',
-            value: rowData.seo['Focus Keywords']
-          }]
+          stockQuantity: rowData.product['Stock Quantity'],
+          yoastMeta: yoastMeta
         };
 
         wooResult = await createProduct(wooConfig, productData);
-        console.log(`✅ Row ${rowNumber} - WooCommerce product created: ${wooResult.productUrl}`);
+        console.log(`✅ Row ${rowNumber} - WooCommerce product created with Yoast SEO: ${wooResult.productUrl}`);
       }
 
       successCount++;
@@ -233,12 +264,25 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
   }
   
   // Update process history with final status
+  const processDoc = await ProcessHistory.findById(processHistoryId);
+  let finalStatus = 'completed';
+  
+  if (processDoc && processDoc.shouldStop) {
+    finalStatus = 'stopped';
+  } else if (failedCount === 0) {
+    finalStatus = 'completed';
+  } else if (successCount === 0) {
+    finalStatus = 'failed';
+  } else {
+    finalStatus = 'partial';
+  }
+  
   await ProcessHistory.findByIdAndUpdate(processHistoryId, {
-    status: failedCount === 0 ? 'completed' : (successCount === 0 ? 'failed' : 'partial'),
+    status: finalStatus,
     completedAt: new Date()
   });
   
-  console.log(`✅ Processing completed: ${successCount} success, ${failedCount} failed`);
+  console.log(`✅ Processing completed: ${successCount} success, ${failedCount} failed, status: ${finalStatus}`);
 };
 
 /**
@@ -372,9 +416,49 @@ const retryFailedRows = async (req, res) => {
   }
 };
 
+/**
+ * Stop a processing task
+ */
+const stopProcess = async (req, res) => {
+  try {
+    const { processId } = req.body;
+    
+    const process = await ProcessHistory.findById(processId);
+    if (!process) {
+      return res.status(404).json({
+        success: false,
+        message: 'Process not found'
+      });
+    }
+    
+    if (process.status !== 'processing') {
+      return res.status(400).json({
+        success: false,
+        message: 'Process is not currently running'
+      });
+    }
+    
+    // Mark process to stop
+    await ProcessHistory.findByIdAndUpdate(processId, {
+      shouldStop: true
+    });
+    
+    res.json({
+      success: true,
+      message: 'Stop command sent. Processing will stop after current row.'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 module.exports = {
   processExcel,
   getProcessStatus,
   getAllProcessHistory,
-  retryFailedRows
+  retryFailedRows,
+  stopProcess
 };

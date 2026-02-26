@@ -56,8 +56,13 @@ const processHistorySchema = new mongoose.Schema({
   }],
   status: {
     type: String,
-    enum: ['processing', 'completed', 'failed', 'partial'],
+    enum: ['processing', 'completed', 'failed', 'partial', 'stopped'],
     default: 'processing'
+  },
+  shouldStop: {
+    type: Boolean,
+    default: false,
+    description: 'Flag to stop processing'
   },
   startedAt: {
     type: Date,

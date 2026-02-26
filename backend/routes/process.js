@@ -5,7 +5,8 @@ const {
   processExcel,
   getProcessStatus,
   getAllProcessHistory,
-  retryFailedRows
+  retryFailedRows,
+  stopProcess
 } = require('../controllers/processController');
 
 // Configure multer for file upload (memory storage)
@@ -46,5 +47,8 @@ router.get('/history', getAllProcessHistory);
 
 // POST retry failed rows
 router.post('/retry', retryFailedRows);
+
+// POST stop process
+router.post('/stop', stopProcess);
 
 module.exports = router;

@@ -15,6 +15,7 @@ const ProcessExcel = () => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     fetchTemplates();
@@ -123,10 +124,32 @@ const ProcessExcel = () => {
       return;
     }
 
+    // Check if WordPress credentials are needed and available
+    if ((postType === 'wordpress' || postType === 'both')) {
+      try {
+        const wpConfig = localStorage.getItem('wpConfig');
+        if (!wpConfig) {
+          toast.showToast('⚠️ WordPress credentials not found. Please configure WordPress Settings first.', 'warning');
+          return;
+        }
+      } catch (error) {
+        toast.showToast('Error checking WordPress configuration', 'error');
+        return;
+      }
+    }
+
     const formData = new FormData();
     formData.append('excelFile', file);
     formData.append('templateId', selectedTemplate);
     formData.append('postType', postType);
+    
+    // Add WordPress credentials from localStorage if needed
+    if (postType === 'wordpress' || postType === 'both') {
+      const wpConfig = JSON.parse(localStorage.getItem('wpConfig') || '{}');
+      formData.append('wpSiteUrl', wpConfig.siteUrl);
+      formData.append('wpUsername', wpConfig.username);
+      formData.append('wpAppPassword', wpConfig.appPassword);
+    }
 
     setProcessing(true);
     setStatus(null);
@@ -149,6 +172,21 @@ const ProcessExcel = () => {
       console.error('Error processing file:', error);
       toast.showToast(error.response?.data?.message || 'Failed to process file', 'error');
       setProcessing(false);
+    }
+  };
+
+  const handleStopProcess = async () => {
+    if (!processId) return;
+    
+    setStopping(true);
+    try {
+      await processAPI.stopProcess(processId);
+      toast.showToast('Stop command sent. Processing will stop after current row.', 'success');
+    } catch (error) {
+      console.error('Error stopping process:', error);
+      toast.showToast(error.response?.data?.message || 'Failed to stop process', 'error');
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -377,13 +415,26 @@ const ProcessExcel = () => {
         )}
 
         {/* Results Page Link */}
-        {status && ['completed', 'failed', 'partial'].includes(status.status) && (
+        {status && ['completed', 'failed', 'partial', 'stopped'].includes(status.status) && (
           <div className="mt-8 animate-fade">
             <button
               onClick={handleViewResults}
               className="w-full btn-primary py-4 text-lg font-semibold"
             >
               View Detailed Results
+            </button>
+          </div>
+        )}
+
+        {/* Stop Button */}
+        {processing && status && status.status === 'processing' && (
+          <div className="mt-8 animate-fade">
+            <button
+              onClick={handleStopProcess}
+              disabled={stopping}
+              className="w-full bg-red-600 hover:bg-red-700 text-white px-6 py-4 rounded-lg font-semibold transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {stopping ? 'Stopping...' : '🛑 Stop Processing'}
             </button>
           </div>
         )}

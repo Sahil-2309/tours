@@ -94,13 +94,22 @@ If any of these are missing or empty, the row will fail.
 
 ### WooCommerce only (when posting products)
 
-| Column Name    | Purpose          | Example  |
-|----------------|------------------|----------|
-| Price          | Product price    | 12999    |
-| Regular Price  | Original price   | 14999    |
-| Sale Price     | Discounted price | 11999    |
-| SKU            | Product code     | GOA-001  |
-| Stock Quantity | Available stock  | 50       |
+**Required:**
+
+| Column Name | Purpose          | Example  |
+|-------------|------------------|----------|
+| Price       | Product price    | 12999    |
+
+**Optional (dynamic):**
+
+| Column Name    | Purpose                | Example  |
+|----------------|------------------------|----------|
+| Regular Price  | Original/list price    | 14999    |
+| Sale Price     | Discounted price       | 11999    |
+| SKU            | Product code           | GOA-001  |
+| Stock Quantity | Available inventory    | 50       |
+
+*Note: If Regular Price or Sale Price are not in your data, they won't be included in the product.*
 
 ### Content columns (for your AI prompt)
 
@@ -369,6 +378,32 @@ Use ONLY Markdown. No HTML. All links as hyperlinks with descriptive text. No na
 ### WooCommerce products fail
 
 - Add a **Price** column; it is required.
+- Regular Price and Sale Price are optional - only include if you have the data.
+
+---
+
+## Dynamic vs Fixed Requirements
+
+### Fixed Core Requirements (Always Required)
+
+These fields **must** be present and filled for every row:
+
+✅ **Meta Title** - Product/post name  
+✅ **Meta Description** - SEO description  
+✅ **Focus Keywords** - Target SEO keywords  
+✅ **Slug** - URL slug  
+✅ **Price** *(WooCommerce only)* - Product price
+
+### Dynamic Columns (Optional, Flexible)
+
+The application automatically adapts to whatever columns you provide:
+
+- **Duration**, **Tour Itinerary**, **Pickup City**, **Drop City** → Used in AI prompt
+- **Regular Price**, **Sale Price** → Only sent to WooCommerce if you include them
+- **SKU**, **Stock Quantity** → Auto-generated if not provided
+- **Any custom columns** → AI can use them if referenced in template
+
+**Example:** If you only have `[Meta Title, Description, Slug, Price]`, the app works fine. If you add `[Duration, Features, Rating]`, they'll be available to your AI template.
 - Check REST API credentials (Read/Write).
 
 ---
@@ -385,5 +420,3 @@ Use ONLY Markdown. No HTML. All links as hyperlinks with descriptive text. No na
 
 ---
 
-**App URL:** http://localhost:3000  
-**Support:** Refer to this document for setup and usage.

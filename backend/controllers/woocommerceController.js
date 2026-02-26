@@ -3,17 +3,28 @@ const { testConnection } = require('../utils/woocommerceAPI');
 
 /**
  * Get WooCommerce configuration
+ * Returns from database if exists, otherwise from .env
  */
 const getConfig = async (req, res) => {
   try {
-    const config = await WooCommerceConfig.findOne({ isActive: true });
+    let config = await WooCommerceConfig.findOne({ isActive: true });
 
     if (!config) {
-      return res.status(200).json({
-        success: true,
-        data: null,
-        message: 'No WooCommerce configuration found'
-      });
+      // Check if configured via .env
+      if (process.env.WOOCOMMERCE_SITE_URL && process.env.WOOCOMMERCE_CONSUMER_KEY && process.env.WOOCOMMERCE_CONSUMER_SECRET) {
+        config = {
+          siteUrl: process.env.WOOCOMMERCE_SITE_URL,
+          consumerKey: process.env.WOOCOMMERCE_CONSUMER_KEY,
+          consumerSecret: process.env.WOOCOMMERCE_CONSUMER_SECRET,
+          source: 'environment',
+          message: 'Configuration loaded from environment (.env)'
+        };
+      } else {
+        return res.status(404).json({
+          success: false,
+          message: 'No WooCommerce configuration found. Add credentials to .env or configure via Settings.'
+        });
+      }
     }
 
     res.json({
@@ -33,15 +44,7 @@ const getConfig = async (req, res) => {
  */
 const saveConfig = async (req, res) => {
   try {
-    let { siteUrl, consumerKey, consumerSecret } = req.body;
-    siteUrl = (siteUrl || '').trim().replace(/\/+$/, '');
-
-    if (!siteUrl || !consumerKey || !consumerSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'Site URL, Consumer Key, and Consumer Secret are required'
-      });
-    }
+    const { siteUrl, consumerKey, consumerSecret } = req.body;
 
     await WooCommerceConfig.updateMany({}, { isActive: false });
 
@@ -67,32 +70,14 @@ const saveConfig = async (req, res) => {
 
 /**
  * Test WooCommerce connection
- * Accepts (siteUrl, consumerKey, consumerSecret) OR (configId) to test with stored credentials
  */
 const testWooConnection = async (req, res) => {
   try {
-    let { siteUrl, consumerKey, consumerSecret, configId } = req.body;
-
-    if (configId && (!consumerKey?.trim() || !consumerSecret?.trim())) {
-      const storedConfig = await WooCommerceConfig.findById(configId);
-      if (storedConfig) {
-        siteUrl = storedConfig.siteUrl;
-        consumerKey = storedConfig.consumerKey;
-        consumerSecret = storedConfig.consumerSecret;
-      }
-    }
-
-    if (!siteUrl || !consumerKey || !consumerSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'Site URL, consumer key, and consumer secret are required. Or provide configId to test with stored credentials.'
-      });
-    }
-
+    const { siteUrl, consumerKey, consumerSecret } = req.body;
     const result = await testConnection(siteUrl, consumerKey, consumerSecret);
 
-    if (configId) {
-      await WooCommerceConfig.findByIdAndUpdate(configId, {
+    if (req.body.configId) {
+      await WooCommerceConfig.findByIdAndUpdate(req.body.configId, {
         lastTested: new Date(),
         testStatus: result.success ? 'success' : 'failed'
       });
