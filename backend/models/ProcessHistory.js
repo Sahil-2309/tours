@@ -32,6 +32,11 @@ const processHistorySchema = new mongoose.Schema({
     default: 'wordpress',
     description: 'Where the content was posted'
   },
+  wooProductType: {
+    type: String,
+    default: 'simple',
+    description: 'WooCommerce product type (e.g. simple, tour_phys)'
+  },
   failedRows: [{
     rowNumber: Number,
     rowData: Object,

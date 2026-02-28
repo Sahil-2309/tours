@@ -172,7 +172,7 @@ const Results = () => {
           </div>
         </div>
 
-        {process.failedCount > 0 && (
+        {/* {process.failedCount > 0 && (
           <div className="mb-8 animate-fade">
             <button
               type="button"
@@ -183,7 +183,7 @@ const Results = () => {
               {retrying ? 'Retrying...' : `Retry ${process.failedCount} Failed Row${process.failedCount > 1 ? 's' : ''}`}
             </button>
           </div>
-        )}
+        )} */}
 
         {process.successRows && process.successRows.length > 0 && (
           <div className="card-glass shadow-soft rounded-2xl p-8 mb-8 animate-fade">

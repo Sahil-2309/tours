@@ -32,6 +32,7 @@ export const woocommerceAPI = {
   saveConfig: (data) => api.post('/woocommerce/config', data),
   testConnection: (data) => api.post('/woocommerce/test', data),
   deleteConfig: (id) => api.delete(`/woocommerce/config/${id}`),
+  getWooProductTypes: () => api.get('/woocommerce/product-types'),
 };
 
 // Process APIs

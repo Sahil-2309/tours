@@ -5,7 +5,8 @@ const {
   saveConfig,
   testWooConnection,
   deleteConfig,
-  generateAndCreateProduct
+  generateAndCreateProduct,
+  getProductTypes
 } = require('../controllers/woocommerceController');
 
 // GET WooCommerce config
@@ -13,6 +14,8 @@ router.get('/config', getConfig);
 
 // POST save WooCommerce config
 router.post('/config', saveConfig);
+
+router.get('/product-types', getProductTypes); 
 
 // POST test WooCommerce connection
 router.post('/test', testWooConnection);

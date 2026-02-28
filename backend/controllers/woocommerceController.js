@@ -136,7 +136,8 @@ const generateAndCreateProduct = async (req, res) => {
       price,
       sku,
       stockQuantity,
-      contentData
+      contentData,
+      productType = 'simple' // default to simple product
     } = req.body;
 
     // Validate required fields
@@ -177,20 +178,9 @@ STRICT RULES:
 1. Return ONLY a valid JSON object — no markdown, no explanation, no extra text
 2. Fill EXACTLY these fields and nothing else:
    - name: "${metaTitle}"
-   - slug: "${slug}"
-   - type: "simple"
-   - status: "draft"
    - short_description: max 155 chars sales teaser based on tour data
    - description: complete HTML description using the TEMPLATE structure above (use <h2>, <h3>, <p>, <ul>, <strong> — NO markdown)
-   - price: "${price}"
-   - regular_price: "${price}"
-   - sku: "${finalSku}"
-   - stock_quantity: ${finalStock}
-   - manage_stock: true
-   - meta_data: array with exactly 3 objects:
-       {"key": "rank_math_title", "value": "${metaTitle}"}
-       {"key": "rank_math_description", "value": "${metaDescription}"}
-       {"key": "rank_math_focus_keyword", "value": "${focusKeyword}"}
+
 3. DO NOT add any other fields — no categories, no images, no attributes, no tags, no allPricing
 4. Output ONLY the JSON object`;
 
@@ -201,7 +191,7 @@ STRICT RULES:
     const productData = {
       name: metaTitle,                          // Always from input
       slug: slug,                               // Always from input
-      type: 'simple',
+      type: productType,                        // Always from input
       status: 'draft',
       short_description: aiData.short_description || '',
       description: aiData.description || '',
@@ -263,10 +253,28 @@ STRICT RULES:
   }
 };
 
+const getProductTypes = async (req, res) => {
+  try {
+    const wooConfig = await WooCommerceConfig.findOne({ isActive: true });
+    const siteUrl = wooConfig?.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
+
+    const response = await axios.get(`${siteUrl}/wp-json/custom/v1/product-types`);
+
+    // response: [{ slug: 'tour_phys', label: 'Tour' }, ...]
+    res.json({ success: true, data: response.data });
+
+  } catch (error) {
+    console.error('Error fetching product types:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch product types' });
+  }
+};
+
+
 module.exports = {
   getConfig,
   saveConfig,
   testWooConnection,
   deleteConfig,
-  generateAndCreateProduct
+  generateAndCreateProduct,
+  getProductTypes
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { templateAPI, processAPI } from '../services/api';
+import { templateAPI, processAPI, woocommerceAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 
@@ -17,8 +17,13 @@ const ProcessExcel = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [stopping, setStopping] = useState(false);
 
+  // WooCommerce product type states
+  const [wooProductTypes, setWooProductTypes] = useState([]);
+  const [wooProductType, setWooProductType] = useState('');
+
   useEffect(() => {
     fetchTemplates();
+    fetchProductTypes();
   }, []);
 
   useEffect(() => {
@@ -30,6 +35,22 @@ const ProcessExcel = () => {
     }
     return () => clearInterval(interval);
   }, [processId, processing]);
+
+  const fetchProductTypes = async () => {
+    try {
+      const response = await woocommerceAPI.getWooProductTypes();
+      const types = response.data.data; // [{ slug, label }]
+      setWooProductTypes(types);
+      if (types.length > 0) {
+        setWooProductType(types[0].slug); // default first type
+      }
+    } catch (error) {
+      console.error('Error fetching WooCommerce product types:', error);
+      // fallback
+      setWooProductTypes([{ slug: 'simple', label: 'Simple' }]);
+      setWooProductType('simple');
+    }
+  };
 
   const fetchTemplates = async () => {
     try {
@@ -72,23 +93,9 @@ const ProcessExcel = () => {
     }
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragEnter = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); };
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -142,13 +149,18 @@ const ProcessExcel = () => {
     formData.append('excelFile', file);
     formData.append('templateId', selectedTemplate);
     formData.append('postType', postType);
-    
+
     // Add WordPress credentials from localStorage if needed
     if (postType === 'wordpress' || postType === 'both') {
       const wpConfig = JSON.parse(localStorage.getItem('wpConfig') || '{}');
       formData.append('wpSiteUrl', wpConfig.siteUrl);
       formData.append('wpUsername', wpConfig.username);
       formData.append('wpAppPassword', wpConfig.appPassword);
+    }
+
+    // WooCommerce product type append
+    if (postType === 'woocommerce' || postType === 'both') {
+      formData.append('wooProductType', wooProductType);
     }
 
     setProcessing(true);
@@ -191,9 +203,7 @@ const ProcessExcel = () => {
   };
 
   const handleViewResults = () => {
-    if (processId) {
-      navigate(`/results/${processId}`);
-    }
+    if (processId) navigate(`/results/${processId}`);
   };
 
   if (loading) {
@@ -222,6 +232,7 @@ const ProcessExcel = () => {
           <div className="card-glass shadow-soft rounded-2xl p-8 animate-fade space-y-8">
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-6">
+
               {/* Template Selection */}
               <div>
                 <label className="block text-sm font-semibold text-slate-200 mb-3">
@@ -245,7 +256,8 @@ const ProcessExcel = () => {
                   )}
                 </select>
                 <p className="text-xs text-slate-400 mt-2">
-                  Don't have a template? <a href="/" className="text-blue-600 hover:underline">Create one first</a>
+                  Don't have a template?{' '}
+                  <a href="/" className="text-blue-600 hover:underline">Create one first</a>
                 </p>
               </div>
 
@@ -254,11 +266,10 @@ const ProcessExcel = () => {
                 <label className="block text-sm font-semibold text-slate-200 mb-3">
                   Post To <span className="text-red-500">*</span>
                 </label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   {[
-                    { value: 'wordpress', label: 'WordPress', icon: '▪', desc: 'Blog Posts' },
-                    { value: 'woocommerce', label: 'WooCommerce', icon: '▪', desc: 'Products' },
-                    { value: 'both', label: 'Both', icon: '▪', desc: 'Posts & Products' },
+                    { value: 'wordpress', label: 'WordPress', desc: 'Blog Posts' },
+                    { value: 'woocommerce', label: 'WooCommerce', desc: 'Products' },
                   ].map((option) => (
                     <label
                       key={option.value}
@@ -278,6 +289,29 @@ const ProcessExcel = () => {
                       />
                       <div className="font-semibold text-slate-100">{option.label}</div>
                       <div className="text-xs text-slate-400 mt-1">{option.desc}</div>
+
+                      {/* WooCommerce Product Type Dropdown — sirf woocommerce selected ho toh dikhao */}
+                      {option.value === 'woocommerce' && postType === 'woocommerce' && (
+                        <select
+                          value={wooProductType}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            setWooProductType(e.target.value);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-3 w-full bg-slate-700 text-slate-100 text-xs rounded-md px-2 py-1.5 border border-slate-600 focus:outline-none focus:border-cyan-500"
+                        >
+                          {wooProductTypes.length === 0 ? (
+                            <option disabled>Loading types...</option>
+                          ) : (
+                            wooProductTypes.map((type) => (
+                              <option key={type.slug} value={type.slug}>
+                                {type.label}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      )}
                     </label>
                   ))}
                 </div>
@@ -313,14 +347,10 @@ const ProcessExcel = () => {
                     {file ? (
                       <div>
                         <p className="font-semibold text-slate-100">{file.name}</p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {(file.size / 1024).toFixed(2)} KB
-                        </p>
+                        <p className="text-xs text-slate-400 mt-1">{(file.size / 1024).toFixed(2)} KB</p>
                       </div>
                     ) : isDragging ? (
-                      <div>
-                        <p className="font-semibold text-slate-100">Drop your Excel file here</p>
-                      </div>
+                      <p className="font-semibold text-slate-100">Drop your Excel file here</p>
                     ) : (
                       <div>
                         <p className="font-semibold text-slate-100">Drop your Excel file here</p>
@@ -355,11 +385,11 @@ const ProcessExcel = () => {
               <h3 className="font-semibold text-blue-900 mb-3">Process Flow</h3>
               <ol className="text-blue-800 text-sm space-y-2 list-decimal list-inside">
                 <li>Select your AI prompt template</li>
-                <li>Choose where to post (WordPress, WooCommerce, or both)</li>
+                <li>Choose where to post (WordPress or WooCommerce)</li>
                 <li>Upload your Excel file with content data</li>
                 <li>System passes your template + each row to Gemini AI</li>
                 <li>Gemini generates content for each row</li>
-                <li>Content is posted to your selected platform(s)</li>
+                <li>Content is posted to your selected platform</li>
                 <li>Monitor progress and retry failed rows if needed</li>
               </ol>
             </div>
