@@ -257,14 +257,18 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
     let wooResult = null;
     let wooError = null;
 
-    if (postType === 'woocommerce' || postType === 'both') {
-      try {
-        // ✅ wooProductType pass karo
-        const productData = await generateWooCommerceProduct(template, rowData, wooProductType);
+   if (postType === 'woocommerce' || postType === 'both') {
+  try {
+    const productData = await generateWooCommerceProduct(template, rowData, wooProductType);
 
-        const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
-        const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
-        const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
+    const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
+    const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
+    const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
+
+    // ✅ Debug logs
+    console.log('🔑 siteUrl:', siteUrl);
+    console.log('🔑 consumerKey:', consumerKey ? consumerKey.substring(0, 10) + '...' : 'MISSING');
+    console.log('🔑 consumerSecret:', consumerSecret ? 'SET' : 'MISSING');
 
         if (!siteUrl || !consumerKey || !consumerSecret) {
           throw new Error('WooCommerce credentials not configured');
@@ -288,9 +292,10 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
 
         console.log(`✅ Row ${rowNumber} - WooCommerce product created: ${created.name} (ID: ${created.id})`);
       } catch (error) {
-        wooError = error.message;
-        console.log(`❌ Row ${rowNumber} - WooCommerce failed: ${error.message}`);
-      }
+    wooError = error.message;
+    console.log(`❌ Row ${rowNumber} - WooCommerce failed: ${error.message}`);
+    console.log('❌ Full error:', error.response?.data); // ✅ add karo
+  }
     }
 
     const rowFailed = (postType === 'both')
