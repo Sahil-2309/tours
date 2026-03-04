@@ -266,9 +266,9 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
     const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
 
     // ✅ Debug logs
-    console.log('🔑 siteUrl:', siteUrl);
-    console.log('🔑 consumerKey:', consumerKey ? consumerKey.substring(0, 10) + '...' : 'MISSING');
-    console.log('🔑 consumerSecret:', consumerSecret ? 'SET' : 'MISSING');
+    // console.log('🔑 siteUrl:', siteUrl);
+    // console.log('🔑 consumerKey:', consumerKey ? consumerKey.substring(0, 10) + '...' : 'MISSING');
+    // console.log('🔑 consumerSecret:', consumerSecret ? 'SET' : 'MISSING');
 
         if (!siteUrl || !consumerKey || !consumerSecret) {
           throw new Error('WooCommerce credentials not configured');
@@ -355,7 +355,7 @@ const getProcessStatus = async (req, res) => {
 
 const getAllProcessHistory = async (req, res) => {
   try {
-    const history = await ProcessHistory.find().sort({ createdAt: -1 }).limit(50);
+    const history = await ProcessHistory.find().sort({ createdAt: -1 }).limit(10);
     res.json({ success: true, count: history.length, data: history });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
