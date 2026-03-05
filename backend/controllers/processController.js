@@ -282,7 +282,6 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
       } catch (error) {
         wooError = error.message;
         console.log(`❌ Row ${rowNumber} - WooCommerce failed: ${error.message}`);
-        console.log(error)
       }
     }
 
