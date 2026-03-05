@@ -10,33 +10,26 @@ const { marked } = require('marked');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require('axios');
 
-const WOOCOMMERCE_STRICT_SCHEMA = {
-  name: "",
-  slug: "",
-  type: "simple",
-  status: "draft",
-  short_description: "",
-  description: "",
-  price: "",
-  regular_price: "",
-  sku: "",
-  stock_quantity: 0,
-  manage_stock: true,
-  meta_data: [
-    { key: "rank_math_title", value: "" },
-    { key: "rank_math_description", value: "" },
-    { key: "rank_math_focus_keyword", value: "" }
-  ]
-};
+const DEFAULT_GEMINI_MODEL = 'models/gemini-2.5-flash';
 
 // ─────────────────────────────────────────────
-// Gemini call helper
+// Gemini call helper — model dynamic
 // ─────────────────────────────────────────────
-const callGemini = async (prompt) => {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+const callGemini = async (prompt, model = DEFAULT_GEMINI_MODEL) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`;
+
+  const response = await axios.post(url, {
+    contents: [{ parts: [{ text: prompt }] }]
+  }, {
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  if (response.data?.candidates?.[0]?.content?.parts?.[0]) {
+    return response.data.candidates[0].content.parts[0].text;
+  }
+
+  throw new Error('Invalid response from Gemini API');
 };
 
 const extractJSON = (text) => {
@@ -47,11 +40,9 @@ const extractJSON = (text) => {
 };
 
 // ─────────────────────────────────────────────
-// WooCommerce strict JSON generator
-// Template DB se aata hai (content ke liye)
-// But output schema bilkul fixed hai
+// WooCommerce product generator
 // ─────────────────────────────────────────────
-const generateWooCommerceProduct = async (template, rowData, productType = 'simple') => {
+const generateWooCommerceProduct = async (template, rowData, productType = 'simple', geminiModel = DEFAULT_GEMINI_MODEL) => {
   const price = rowData.product?.['Price'] || rowData.content?.['Price'] || '';
   const sku = rowData.product?.['SKU'] || rowData.seo?.['Slug'] || '';
   const stockQuantity = parseInt(rowData.product?.['Stock Quantity'] || rowData.content?.['Stock Quantity'] || 999);
@@ -75,21 +66,20 @@ SEO DATA:
 
 STRICT RULES:
 1. Return ONLY a valid JSON object — no markdown, no explanation, no extra text
-2. Fill EXACTLY these 3 fields and nothing else:
-   - name: use Meta Title
+2. Fill EXACTLY these 2 fields and nothing else:
    - short_description: max 155 chars sales teaser based on tour data
    - description: complete HTML description using the TEMPLATE structure above (use <h2>, <h3>, <p>, <ul>, <strong> — NO markdown)
 3. DO NOT add any other fields
 4. Output ONLY the JSON object`;
 
-  const rawText = await callGemini(prompt);
+  // ✅ geminiModel pass karo
+  const rawText = await callGemini(prompt, geminiModel);
   const aiData = extractJSON(rawText);
 
-  // Schema enforce — AI ne kuch extra daala toh strip kar do
   const product = {
-    name: aiData.name || rowData.seo['Meta Title'],
+    name: rowData.seo['Meta Title'],
     slug: rowData.seo['Slug'],
-    type: productType,                // ✅ dynamic — tour_phys ya jo bhi aaye
+    type: productType,
     status: 'draft',
     short_description: aiData.short_description || '',
     description: aiData.description || '',
@@ -113,7 +103,7 @@ STRICT RULES:
 // ─────────────────────────────────────────────
 const processExcel = async (req, res) => {
   try {
-    const { templateId, postType, wooProductType } = req.body; // ✅ wooProductType add
+    const { templateId, postType, wooProductType, geminiModel } = req.body; // ✅ geminiModel add
     const { wpSiteUrl, wpUsername, wpAppPassword } = req.body;
     const file = req.file;
 
@@ -123,7 +113,8 @@ const processExcel = async (req, res) => {
     if (!template) return res.status(404).json({ success: false, message: 'Template not found' });
 
     const configuredPostType = postType || 'wordpress';
-    const configuredProductType = wooProductType || 'simple'; // ✅ fallback simple
+    const configuredProductType = wooProductType || 'simple';
+    const configuredGeminiModel = geminiModel || DEFAULT_GEMINI_MODEL; // ✅
 
     let wpConfig = null;
     let wooConfig = null;
@@ -167,7 +158,8 @@ const processExcel = async (req, res) => {
       totalRows: excelData.length,
       status: 'processing',
       postType: configuredPostType,
-      wooProductType: configuredProductType // ✅ save karo DB mein (retry ke liye)
+      wooProductType: configuredProductType,
+      geminiModel: configuredGeminiModel // ✅ DB mein save karo
     });
 
     res.json({
@@ -177,8 +169,7 @@ const processExcel = async (req, res) => {
       totalRows: excelData.length
     });
 
-    // ✅ wooProductType pass karo
-    processRows(excelData, template, wpConfig, wooConfig, processHistory._id, configuredPostType, configuredProductType);
+    processRows(excelData, template, wpConfig, wooConfig, processHistory._id, configuredPostType, configuredProductType, configuredGeminiModel);
 
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -188,7 +179,7 @@ const processExcel = async (req, res) => {
 // ─────────────────────────────────────────────
 // Row processor
 // ─────────────────────────────────────────────
-const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId, postType = 'wordpress', wooProductType = 'simple') => {
+const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId, postType = 'wordpress', wooProductType = 'simple', geminiModel = DEFAULT_GEMINI_MODEL) => {
   let successCount = 0;
   let failedCount = 0;
   const failedRows = [];
@@ -225,7 +216,8 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
 
     if (postType === 'wordpress' || postType === 'both') {
       try {
-        const markdownContent = await generateContent(template.template, rowData.content);
+        // ✅ geminiModel pass karo generateContent mein
+        const markdownContent = await generateContent(template.template, rowData.content, geminiModel);
         const htmlContent = marked(markdownContent);
 
         const seoMeta = {
@@ -257,18 +249,14 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
     let wooResult = null;
     let wooError = null;
 
-   if (postType === 'woocommerce' || postType === 'both') {
-  try {
-    const productData = await generateWooCommerceProduct(template, rowData, wooProductType);
+    if (postType === 'woocommerce' || postType === 'both') {
+      try {
+        // ✅ geminiModel pass karo
+        const productData = await generateWooCommerceProduct(template, rowData, wooProductType, geminiModel);
 
-    const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
-    const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
-    const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
-
-    // ✅ Debug logs
-    // console.log('🔑 siteUrl:', siteUrl);
-    // console.log('🔑 consumerKey:', consumerKey ? consumerKey.substring(0, 10) + '...' : 'MISSING');
-    // console.log('🔑 consumerSecret:', consumerSecret ? 'SET' : 'MISSING');
+        const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
+        const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
+        const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
 
         if (!siteUrl || !consumerKey || !consumerSecret) {
           throw new Error('WooCommerce credentials not configured');
@@ -292,10 +280,10 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
 
         console.log(`✅ Row ${rowNumber} - WooCommerce product created: ${created.name} (ID: ${created.id})`);
       } catch (error) {
-    wooError = error.message;
-    console.log(`❌ Row ${rowNumber} - WooCommerce failed: ${error.message}`);
-    console.log('❌ Full error:', error);
-  }
+        wooError = error.message;
+        console.log(`❌ Row ${rowNumber} - WooCommerce failed: ${error.message}`);
+        console.log(error)
+      }
     }
 
     const rowFailed = (postType === 'both')
@@ -374,7 +362,8 @@ const retryFailedRows = async (req, res) => {
     if (!template) return res.status(404).json({ success: false, message: 'Template not found' });
 
     const postType = originalProcess.postType || 'wordpress';
-    const wooProductType = originalProcess.wooProductType || 'simple'; // ✅ DB se lo
+    const wooProductType = originalProcess.wooProductType || 'simple';
+    const geminiModel = originalProcess.geminiModel || DEFAULT_GEMINI_MODEL; // ✅ DB se lo
 
     let wpConfig = null;
     let wooConfig = null;
@@ -393,13 +382,14 @@ const retryFailedRows = async (req, res) => {
       totalRows: originalProcess.failedRows.length,
       status: 'processing',
       postType,
-      wooProductType // ✅ retry mein bhi same type
+      wooProductType,
+      geminiModel // ✅ retry mein bhi same model
     });
 
     res.json({ success: true, message: 'Retry started', processId: retryProcess._id, totalRows: originalProcess.failedRows.length });
 
     const failedRowsData = originalProcess.failedRows.map(fr => fr.rowData);
-    processRows(failedRowsData, template, wpConfig, wooConfig, retryProcess._id, postType, wooProductType); // ✅ pass karo
+    processRows(failedRowsData, template, wpConfig, wooConfig, retryProcess._id, postType, wooProductType, geminiModel);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

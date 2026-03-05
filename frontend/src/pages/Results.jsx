@@ -172,19 +172,6 @@ const Results = () => {
           </div>
         </div>
 
-        {/* {process.failedCount > 0 && (
-          <div className="mb-8 animate-fade">
-            <button
-              type="button"
-              onClick={handleRetry}
-              disabled={retrying}
-              className="w-full bg-amber-950/40 text-amber-200 border border-amber-700 rounded-lg font-semibold py-4 hover:bg-amber-900/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {retrying ? 'Retrying...' : `Retry ${process.failedCount} Failed Row${process.failedCount > 1 ? 's' : ''}`}
-            </button>
-          </div>
-        )} */}
-
         {process.successRows && process.successRows.length > 0 && (
           <div className="card-glass shadow-soft rounded-2xl p-8 mb-8 animate-fade">
             <h2 className="text-2xl font-bold text-slate-100 mb-6">

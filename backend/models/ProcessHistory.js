@@ -29,13 +29,15 @@ const processHistorySchema = new mongoose.Schema({
   postType: {
     type: String,
     enum: ['wordpress', 'woocommerce', 'both'],
-    default: 'wordpress',
-    description: 'Where the content was posted'
+    default: 'wordpress'
   },
   wooProductType: {
     type: String,
-    default: 'simple',
-    description: 'WooCommerce product type (e.g. simple, tour_phys)'
+    default: 'simple'
+  },
+  geminiModel: {
+    type: String,
+    default: 'models/gemini-2.5-flash'
   },
   failedRows: [{
     rowNumber: Number,
@@ -66,8 +68,7 @@ const processHistorySchema = new mongoose.Schema({
   },
   shouldStop: {
     type: Boolean,
-    default: false,
-    description: 'Flag to stop processing'
+    default: false
   },
   startedAt: {
     type: Date,

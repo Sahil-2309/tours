@@ -3,6 +3,25 @@ import { templateAPI, processAPI, woocommerceAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 
+// ✅ Gemini models list
+const GEMINI_MODELS = [
+  {
+    id: 'models/gemini-3-flash-preview',
+    label: 'Gemini 3 Flash',
+    desc: 'Best quality, persuasive content 🏆'
+  },
+  {
+    id: 'models/gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    desc: 'Stable & balanced ⚖️'
+  },
+  {
+    id: 'models/gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash-Lite',
+    desc: 'Fastest & cheapest ⚡'
+  },
+];
+
 const ProcessExcel = () => {
   const toast = useToast();
   const navigate = useNavigate();
@@ -20,6 +39,9 @@ const ProcessExcel = () => {
   // WooCommerce product type states
   const [wooProductTypes, setWooProductTypes] = useState([]);
   const [wooProductType, setWooProductType] = useState('');
+
+  // ✅ Gemini model state
+  const [geminiModel, setGeminiModel] = useState('models/gemini-3-flash-preview');
 
   useEffect(() => {
     fetchTemplates();
@@ -39,14 +61,11 @@ const ProcessExcel = () => {
   const fetchProductTypes = async () => {
     try {
       const response = await woocommerceAPI.getWooProductTypes();
-      const types = response.data.data; // [{ slug, label }]
+      const types = response.data.data;
       setWooProductTypes(types);
-      if (types.length > 0) {
-        setWooProductType(types[0].slug); // default first type
-      }
+      if (types.length > 0) setWooProductType(types[0].slug);
     } catch (error) {
       console.error('Error fetching WooCommerce product types:', error);
-      // fallback
       setWooProductTypes([{ slug: 'simple', label: 'Simple' }]);
       setWooProductType('simple');
     }
@@ -68,7 +87,6 @@ const ProcessExcel = () => {
     try {
       const response = await processAPI.getStatus(id);
       setStatus(response.data.data);
-
       if (['completed', 'failed', 'partial'].includes(response.data.data.status)) {
         setProcessing(false);
       }
@@ -101,7 +119,6 @@ const ProcessExcel = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles && droppedFiles.length > 0) {
       const selectedFile = droppedFiles[0];
@@ -109,7 +126,6 @@ const ProcessExcel = () => {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'application/vnd.ms-excel',
       ];
-
       if (!validTypes.includes(selectedFile.type)) {
         toast.showToast('Please select an Excel file (.xlsx or .xls)', 'warning');
         return;
@@ -131,8 +147,7 @@ const ProcessExcel = () => {
       return;
     }
 
-    // Check if WordPress credentials are needed and available
-    if ((postType === 'wordpress' || postType === 'both')) {
+    if (postType === 'wordpress' || postType === 'both') {
       try {
         const wpConfig = localStorage.getItem('wpConfig');
         if (!wpConfig) {
@@ -149,8 +164,8 @@ const ProcessExcel = () => {
     formData.append('excelFile', file);
     formData.append('templateId', selectedTemplate);
     formData.append('postType', postType);
+    formData.append('geminiModel', geminiModel); // ✅ model bhejo
 
-    // Add WordPress credentials from localStorage if needed
     if (postType === 'wordpress' || postType === 'both') {
       const wpConfig = JSON.parse(localStorage.getItem('wpConfig') || '{}');
       formData.append('wpSiteUrl', wpConfig.siteUrl);
@@ -158,7 +173,6 @@ const ProcessExcel = () => {
       formData.append('wpAppPassword', wpConfig.appPassword);
     }
 
-    // WooCommerce product type append
     if (postType === 'woocommerce' || postType === 'both') {
       formData.append('wooProductType', wooProductType);
     }
@@ -189,7 +203,6 @@ const ProcessExcel = () => {
 
   const handleStopProcess = async () => {
     if (!processId) return;
-    
     setStopping(true);
     try {
       await processAPI.stopProcess(processId);
@@ -217,11 +230,14 @@ const ProcessExcel = () => {
     );
   }
 
-  const progressPercent = status?.totalRows > 0 ? Math.round(((status.successCount + status.failedCount) / status.totalRows) * 100) : 0;
+  const progressPercent = status?.totalRows > 0
+    ? Math.round(((status.successCount + status.failedCount) / status.totalRows) * 100)
+    : 0;
 
   return (
     <div className="container mx-auto px-4 py-12">
       <div className="max-w-3xl mx-auto">
+
         {/* Header */}
         <div className="mb-12 animate-fade">
           <h1 className="text-4xl font-bold text-slate-100 mb-2">Process Excel</h1>
@@ -230,7 +246,6 @@ const ProcessExcel = () => {
 
         {!processing && !status && (
           <div className="card-glass shadow-soft rounded-2xl p-8 animate-fade space-y-8">
-            {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-6">
 
               {/* Template Selection */}
@@ -259,6 +274,41 @@ const ProcessExcel = () => {
                   Don't have a template?{' '}
                   <a href="/" className="text-blue-600 hover:underline">Create one first</a>
                 </p>
+              </div>
+
+              {/* ✅ Gemini Model Selection */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-200 mb-3">
+                  Gemini Model <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-1 gap-3">
+                  {GEMINI_MODELS.map((m) => (
+                    <label
+                      key={m.id}
+                      className={`p-4 rounded-lg cursor-pointer border-2 transition-all duration-300 flex items-center justify-between ${
+                        geminiModel === m.id
+                          ? 'border-cyan-500 bg-slate-800'
+                          : 'border-slate-700 hover:border-cyan-500 bg-slate-900'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="geminiModel"
+                        value={m.id}
+                        checked={geminiModel === m.id}
+                        onChange={(e) => setGeminiModel(e.target.value)}
+                        className="hidden"
+                      />
+                      <div>
+                        <div className="font-semibold text-slate-100">{m.label}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">{m.desc}</div>
+                      </div>
+                      {geminiModel === m.id && (
+                        <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
+                      )}
+                    </label>
+                  ))}
+                </div>
               </div>
 
               {/* Post Type Selection */}
@@ -290,14 +340,10 @@ const ProcessExcel = () => {
                       <div className="font-semibold text-slate-100">{option.label}</div>
                       <div className="text-xs text-slate-400 mt-1">{option.desc}</div>
 
-                      {/* WooCommerce Product Type Dropdown — sirf woocommerce selected ho toh dikhao */}
                       {option.value === 'woocommerce' && postType === 'woocommerce' && (
                         <select
                           value={wooProductType}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            setWooProductType(e.target.value);
-                          }}
+                          onChange={(e) => { e.stopPropagation(); setWooProductType(e.target.value); }}
                           onClick={(e) => e.stopPropagation()}
                           className="mt-3 w-full bg-slate-700 text-slate-100 text-xs rounded-md px-2 py-1.5 border border-slate-600 focus:outline-none focus:border-cyan-500"
                         >
@@ -305,9 +351,7 @@ const ProcessExcel = () => {
                             <option disabled>Loading types...</option>
                           ) : (
                             wooProductTypes.map((type) => (
-                              <option key={type.slug} value={type.slug}>
-                                {type.label}
-                              </option>
+                              <option key={type.slug} value={type.slug}>{type.label}</option>
                             ))
                           )}
                         </select>
@@ -364,7 +408,7 @@ const ProcessExcel = () => {
                 </p>
               </div>
 
-              {/* Submit Button */}
+              {/* Submit */}
               <button
                 type="submit"
                 disabled={!selectedTemplate || !file}
@@ -380,14 +424,13 @@ const ProcessExcel = () => {
               </div>
             )}
 
-            {/* Info Box */}
             <div className="p-6 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
               <h3 className="font-semibold text-blue-900 mb-3">Process Flow</h3>
               <ol className="text-blue-800 text-sm space-y-2 list-decimal list-inside">
                 <li>Select your AI prompt template</li>
+                <li>Choose Gemini model for content generation</li>
                 <li>Choose where to post (WordPress or WooCommerce)</li>
                 <li>Upload your Excel file with content data</li>
-                <li>System passes your template + each row to Gemini AI</li>
                 <li>Gemini generates content for each row</li>
                 <li>Content is posted to your selected platform</li>
                 <li>Monitor progress and retry failed rows if needed</li>
@@ -399,9 +442,11 @@ const ProcessExcel = () => {
         {/* Processing Status */}
         {processing && status && (
           <div className="card-glass shadow-soft rounded-2xl p-8 animate-fade">
-            <h2 className="text-2xl font-bold text-slate-100 mb-8">Processing in Progress</h2>
+            <h2 className="text-2xl font-bold text-slate-100 mb-2">Processing in Progress</h2>
+            <p className="text-xs text-slate-400 mb-8">
+              Model: <span className="text-cyan-400 font-semibold">{GEMINI_MODELS.find(m => m.id === geminiModel)?.label}</span>
+            </p>
 
-            {/* Progress Bar */}
             <div className="mb-8">
               <div className="flex justify-between items-center mb-3">
                 <span className="text-sm font-semibold text-slate-200">Progress</span>
@@ -417,7 +462,6 @@ const ProcessExcel = () => {
               </div>
             </div>
 
-            {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
               <div className="bg-slate-800 p-6 rounded-lg text-center">
                 <p className="text-3xl font-bold text-slate-100">{status.totalRows}</p>
@@ -432,25 +476,23 @@ const ProcessExcel = () => {
                 <p className="text-sm text-slate-500 mt-2">Failed</p>
               </div>
               <div className="bg-blue-50 p-6 rounded-lg text-center">
-                <p className="text-3xl font-bold text-blue-600">{status.totalRows - status.successCount - status.failedCount}</p>
+                <p className="text-3xl font-bold text-blue-600">
+                  {status.totalRows - status.successCount - status.failedCount}
+                </p>
                 <p className="text-sm text-slate-500 mt-2">Pending</p>
               </div>
             </div>
 
-            {/* Status Badge */}
             <div className="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
               <p className="text-blue-900 font-semibold">Status: <span className="capitalize">{status.status}</span></p>
             </div>
           </div>
         )}
 
-        {/* Results Page Link */}
+        {/* Results Button */}
         {status && ['completed', 'failed', 'partial', 'stopped'].includes(status.status) && (
           <div className="mt-8 animate-fade">
-            <button
-              onClick={handleViewResults}
-              className="w-full btn-primary py-4 text-lg font-semibold"
-            >
+            <button onClick={handleViewResults} className="w-full btn-primary py-4 text-lg font-semibold">
               View Detailed Results
             </button>
           </div>
@@ -468,6 +510,7 @@ const ProcessExcel = () => {
             </button>
           </div>
         )}
+
       </div>
     </div>
   );
