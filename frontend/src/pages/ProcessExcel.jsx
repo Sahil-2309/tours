@@ -234,6 +234,9 @@ const ProcessExcel = () => {
     ? Math.round(((status.successCount + status.failedCount) / status.totalRows) * 100)
     : 0;
 
+  const processedRows = status ? status.successCount + status.failedCount : 0;
+  const currentRow = processedRows + 1;
+
   return (
     <div className="container mx-auto px-4 py-12">
       <div className="max-w-3xl mx-auto">
@@ -442,49 +445,125 @@ const ProcessExcel = () => {
         {/* Processing Status */}
         {processing && status && (
           <div className="card-glass shadow-soft rounded-2xl p-8 animate-fade">
-            <h2 className="text-2xl font-bold text-slate-100 mb-2">Processing in Progress</h2>
+
+            {/* Keyframes */}
+            <style>{`
+              @keyframes shimmer {
+                0% { background-position: 200% center; }
+                100% { background-position: -200% center; }
+              }
+              @keyframes sweep {
+                0% { background-position: -200% center; }
+                100% { background-position: 200% center; }
+              }
+              @keyframes pulse-dot {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.4; transform: scale(0.7); }
+              }
+            `}</style>
+
+            <h2 className="text-2xl font-bold text-slate-100 mb-1">Processing in fProgress</h2>
             <p className="text-xs text-slate-400 mb-8">
               Model: <span className="text-cyan-400 font-semibold">{GEMINI_MODELS.find(m => m.id === geminiModel)?.label}</span>
             </p>
 
+            {/* Progress Bar Section */}
             <div className="mb-8">
               <div className="flex justify-between items-center mb-3">
-                <span className="text-sm font-semibold text-slate-200">Progress</span>
+                {/* Left: label + bouncing dots */}
+                <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                  Progress
+                  <span className="flex gap-1 items-center">
+                    {[0, 150, 300].map((delay, i) => (
+                      <span
+                        key={i}
+                        className="w-1.5 h-1.5 bg-cyan-400 rounded-full"
+                        style={{ animation: `pulse-dot 1.2s ease-in-out ${delay}ms infinite` }}
+                      ></span>
+                    ))}
+                  </span>
+                </span>
+                {/* Right: count */}
                 <span className="text-sm font-semibold text-slate-400">
-                  {status.successCount + status.failedCount} / {status.totalRows} ({progressPercent}%)
+                  {processedRows} / {status.totalRows} ({progressPercent}%)
                 </span>
               </div>
-              <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+
+              {/* Bar track */}
+              <div className="w-full bg-slate-800 rounded-full h-4 overflow-hidden relative">
+
+                {/* Filled animated bar */}
                 <div
-                  className="bg-gradient-to-r from-blue-600 to-blue-700 h-3 rounded-full transition-all duration-500"
-                  style={{ width: `${progressPercent}%` }}
-                ></div>
+                  className="h-4 rounded-full relative overflow-hidden"
+                  style={{
+                    width: `${Math.max(progressPercent, 4)}%`,
+                    background: 'linear-gradient(90deg, #1d4ed8, #06b6d4, #1d4ed8)',
+                    backgroundSize: '200% 100%',
+                    animation: 'shimmer 2s infinite linear',
+                    transition: 'width 0.7s ease-out',
+                  }}
+                >
+                  {/* White sweep */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
+                      backgroundSize: '200% 100%',
+                      animation: 'sweep 1.8s infinite linear',
+                    }}
+                  />
+                </div>
+
+                {/* Glowing dot at leading edge */}
+                {progressPercent > 0 && progressPercent < 100 && (
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-cyan-300 shadow-lg"
+                    style={{
+                      left: `calc(${Math.max(progressPercent, 4)}% - 6px)`,
+                      transition: 'left 0.7s ease-out',
+                      boxShadow: '0 0 8px 3px rgba(6,182,212,0.6)',
+                      animation: 'pulse-dot 1s ease-in-out infinite',
+                    }}
+                  />
+                )}
               </div>
+
+              {/* Status text below bar */}
+              <p className="text-xs text-slate-500 mt-2 text-right">
+                {progressPercent < 100
+                  ? `⚙️ Generating content for row ${currentRow} of ${status.totalRows}...`
+                  : '✅ All rows processed!'}
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="bg-slate-800 p-6 rounded-lg text-center">
                 <p className="text-3xl font-bold text-slate-100">{status.totalRows}</p>
-                <p className="text-sm text-slate-400 mt-2">Total Rows</p>
+                <p className="text-sm text-slate-400 mt-2">Total</p>
               </div>
-              <div className="bg-green-50 p-6 rounded-lg text-center">
-                <p className="text-3xl font-bold text-green-600">{status.successCount}</p>
-                <p className="text-sm text-slate-500 mt-2">Success</p>
-              </div>
-              <div className="bg-red-50 p-6 rounded-lg text-center">
-                <p className="text-3xl font-bold text-red-600">{status.failedCount}</p>
-                <p className="text-sm text-slate-500 mt-2">Failed</p>
-              </div>
-              <div className="bg-blue-50 p-6 rounded-lg text-center">
-                <p className="text-3xl font-bold text-blue-600">
-                  {status.totalRows - status.successCount - status.failedCount}
+              <div className="bg-slate-800 p-6 rounded-lg text-center border border-slate-700">
+                <p className="text-3xl font-bold text-blue-400">
+                  {status.totalRows - processedRows}
                 </p>
-                <p className="text-sm text-slate-500 mt-2">Pending</p>
+                <p className="text-sm text-slate-400 mt-2">Pending</p>
+              </div>
+              <div className="bg-slate-800 p-6 rounded-lg text-center border border-emerald-800">
+                <p className="text-3xl font-bold text-emerald-400">{status.successCount}</p>
+                <p className="text-sm text-slate-400 mt-2">Success</p>
+              </div>
+              <div className="bg-slate-800 p-6 rounded-lg text-center border border-red-900">
+                <p className="text-3xl font-bold text-red-400">{status.failedCount}</p>
+                <p className="text-sm text-slate-400 mt-2">Failed</p>
               </div>
             </div>
 
-            <div className="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
-              <p className="text-blue-900 font-semibold">Status: <span className="capitalize">{status.status}</span></p>
+            <div className="p-4 bg-blue-950/50 border-l-4 border-blue-500 rounded-lg">
+              <p className="text-blue-300 font-semibold text-sm">
+                Status: <span className="capitalize text-blue-200">{status.status}</span>
+                <span className="ml-2 text-slate-400 font-normal">— Gemini is generating content, please wait</span>
+              </p>
             </div>
           </div>
         )}

@@ -67,33 +67,44 @@ const deleteConfig = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// Gemini helper — model dynamic
+// Gemini helper — structured output (no JSON parsing issues)
 // ─────────────────────────────────────────────
 const callGemini = async (prompt, model = DEFAULT_GEMINI_MODEL) => {
   const apiKey = process.env.GEMINI_API_KEY;
   const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`;
 
+  const t1 = Date.now();
+  console.log(`   🤖 [Gemini] Calling model: ${model}`);
+
   const response = await axios.post(url, {
-    contents: [{ parts: [{ text: prompt }] }]
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          short_description: { type: "STRING" },
+          description: { type: "STRING" }
+        },
+        required: ["short_description", "description"]
+      }
+    }
   }, {
     headers: { 'Content-Type': 'application/json' }
   });
 
+  console.log(`   🤖 [Gemini] Response received in ${Date.now() - t1}ms`);
+
   if (response.data?.candidates?.[0]?.content?.parts?.[0]) {
-    return response.data.candidates[0].content.parts[0].text;
+    const text = response.data.candidates[0].content.parts[0].text;
+    return JSON.parse(text);
   }
 
   throw new Error('Invalid response from Gemini API');
 };
 
-const extractJSON = (text) => {
-  let str = text;
-  if (str.includes('```json')) str = str.split('```json')[1].split('```')[0];
-  else if (str.includes('```')) str = str.split('```')[1].split('```')[0];
-  return JSON.parse(str.trim());
-};
-
 const generateAndCreateProduct = async (req, res) => {
+  const startTime = Date.now();
   try {
     const {
       templateId,
@@ -106,8 +117,10 @@ const generateAndCreateProduct = async (req, res) => {
       stockQuantity,
       contentData,
       productType = 'simple',
-      geminiModel = DEFAULT_GEMINI_MODEL // ✅ add
+      geminiModel = DEFAULT_GEMINI_MODEL
     } = req.body;
+
+    console.log(`\n🚀 [generateAndCreateProduct] START — slug: ${slug}`);
 
     if (!templateId) return res.status(400).json({ success: false, message: 'templateId is required' });
     if (!metaTitle || !metaDescription || !focusKeyword || !slug) {
@@ -115,8 +128,11 @@ const generateAndCreateProduct = async (req, res) => {
     }
     if (!price) return res.status(400).json({ success: false, message: 'price is required for WooCommerce products' });
 
+    let t = Date.now();
+    console.log(`   📄 [Step 1] Fetching template from DB...`);
     const template = await Template.findById(templateId);
     if (!template) return res.status(404).json({ success: false, message: 'Template not found' });
+    console.log(`   📄 [Step 1] Template fetched in ${Date.now() - t}ms`);
 
     const finalSku = sku || slug;
     const finalStock = parseInt(stockQuantity || 999);
@@ -127,24 +143,15 @@ TEMPLATE TO FOLLOW FOR DESCRIPTION:
 ${template.template}
 
 TOUR DATA:
-${JSON.stringify(contentData || {})}
+${JSON.stringify(contentData || {})}`;
 
-SEO DATA:
-- Title: ${metaTitle}
-- Meta Description: ${metaDescription}
-- Focus Keyword: ${focusKeyword}
-
-STRICT RULES:
-1. Return ONLY a valid JSON object — no markdown, no explanation, no extra text
-2. Fill EXACTLY these 2 fields and nothing else:
-   - short_description: max 155 chars sales teaser based on tour data
-   - description: complete HTML description using the TEMPLATE structure above (use <h2>, <h3>, <p>, <ul>, <strong> — NO markdown)
-3. DO NOT add any other fields
-4. Output ONLY the JSON object`;
-
-    // ✅ geminiModel pass karo
-    const rawText = await callGemini(prompt, geminiModel);
-    const aiData = extractJSON(rawText);
+    t = Date.now();
+    console.log(`   🤖 [Step 2] Calling Gemini AI...`);
+    const aiData = await callGemini(prompt, geminiModel);
+    
+    console.log(`   🤖 [Step 2] Gemini done in ${Date.now() - t}ms`);
+    console.log(`   🤖 [Step 2] short_description length: ${aiData.short_description?.length || 0} chars`);
+    console.log(`   🤖 [Step 2] description length: ${aiData.description?.length || 0} chars`);
 
     const productData = {
       name: metaTitle,
@@ -165,7 +172,11 @@ STRICT RULES:
       ]
     };
 
+    t = Date.now();
+    console.log(`   🔑 [Step 3] Fetching WooCommerce config from DB...`);
     const wooConfig = await WooCommerceConfig.findOne({ isActive: true });
+    console.log(`   🔑 [Step 3] WooConfig fetched in ${Date.now() - t}ms`);
+
     const siteUrl = wooConfig?.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
     const consumerKey = wooConfig?.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
     const consumerSecret = wooConfig?.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
@@ -176,13 +187,17 @@ STRICT RULES:
 
     const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
+    t = Date.now();
+    console.log(`   🛒 [Step 4] Creating product in WooCommerce — ${siteUrl}...`);
     const wooResponse = await axios.post(
       `${siteUrl}/wp-json/wc/v3/products`,
       productData,
       { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' } }
     );
+    console.log(`   🛒 [Step 4] WooCommerce product created in ${Date.now() - t}ms`);
 
     const createdProduct = wooResponse.data;
+    console.log(`✅ [generateAndCreateProduct] DONE — Total: ${Date.now() - startTime}ms | Product ID: ${createdProduct.id}`);
 
     res.status(201).json({
       success: true,
@@ -198,7 +213,7 @@ STRICT RULES:
     });
 
   } catch (error) {
-    console.error('Product generation error:', error.response?.data || error.message);
+    console.error(`❌ [generateAndCreateProduct] FAILED after ${Date.now() - startTime}ms:`, error.response?.data || error.message);
     res.status(500).json({
       success: false,
       message: error.response?.data?.message || error.message,
