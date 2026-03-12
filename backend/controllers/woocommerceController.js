@@ -1,6 +1,8 @@
 const WooCommerceConfig = require('../models/WooCommerceConfig');
 const Template = require('../models/Template');
 const { testConnection } = require('../utils/woocommerceAPI');
+const { generateStructuredContent } = require('../utils/geminiAPI');
+const { marked } = require('marked');
 const axios = require('axios');
 
 const DEFAULT_GEMINI_MODEL = 'models/gemini-2.5-flash';
@@ -67,40 +69,15 @@ const deleteConfig = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// Gemini helper — structured output (no JSON parsing issues)
+// Gemini Schema
 // ─────────────────────────────────────────────
-const callGemini = async (prompt, model = DEFAULT_GEMINI_MODEL) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`;
-
-  const t1 = Date.now();
-  console.log(`   🤖 [Gemini] Calling model: ${model}`);
-
-  const response = await axios.post(url, {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          short_description: { type: "STRING" },
-          description: { type: "STRING" }
-        },
-        required: ["short_description", "description"]
-      }
-    }
-  }, {
-    headers: { 'Content-Type': 'application/json' }
-  });
-
-  console.log(`   🤖 [Gemini] Response received in ${Date.now() - t1}ms`);
-
-  if (response.data?.candidates?.[0]?.content?.parts?.[0]) {
-    const text = response.data.candidates[0].content.parts[0].text;
-    return JSON.parse(text);
-  }
-
-  throw new Error('Invalid response from Gemini API');
+const WOO_PRODUCT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    short_description: { type: "STRING" },
+    description: { type: "STRING" }
+  },
+  required: ["short_description", "description"]
 };
 
 const generateAndCreateProduct = async (req, res) => {
@@ -147,8 +124,8 @@ ${JSON.stringify(contentData || {})}`;
 
     t = Date.now();
     console.log(`   🤖 [Step 2] Calling Gemini AI...`);
-    const aiData = await callGemini(prompt, geminiModel);
-    
+    const aiData = await generateStructuredContent(prompt, geminiModel, WOO_PRODUCT_SCHEMA);
+
     console.log(`   🤖 [Step 2] Gemini done in ${Date.now() - t}ms`);
     console.log(`   🤖 [Step 2] short_description length: ${aiData.short_description?.length || 0} chars`);
     console.log(`   🤖 [Step 2] description length: ${aiData.description?.length || 0} chars`);
@@ -158,8 +135,8 @@ ${JSON.stringify(contentData || {})}`;
       slug: slug,
       type: productType,
       status: 'draft',
-      short_description: aiData.short_description || '',
-      description: aiData.description || '',
+      short_description: marked.parse(aiData.short_description || ''),
+      description: marked.parse(aiData.description || ''),
       price: String(price),
       regular_price: String(price),
       sku: String(finalSku),

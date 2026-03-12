@@ -3,7 +3,7 @@ const WordPressConfig = require('../models/WordPressConfig');
 const WooCommerceConfig = require('../models/WooCommerceConfig');
 const ProcessHistory = require('../models/ProcessHistory');
 const { parseExcel } = require('../utils/excelParser');
-const { generateContent } = require('../utils/geminiAPI');
+const { generateContent, generateStructuredContent } = require('../utils/geminiAPI');
 const { createPost } = require('../utils/wordpressAPI');
 const { createProduct } = require('../utils/woocommerceAPI');
 const { marked } = require('marked');
@@ -14,38 +14,16 @@ const DEFAULT_GEMINI_MODEL = 'models/gemini-2.5-flash';
 // ─────────────────────────────────────────────
 // Gemini helper — structured output (no JSON parsing issues)
 // ─────────────────────────────────────────────
-const callGemini = async (prompt, model = DEFAULT_GEMINI_MODEL) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`;
-
-  const t1 = Date.now();
-  console.log(`      🤖 [Gemini] Calling model: ${model}`);
-
-  const response = await axios.post(url, {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          short_description: { type: "STRING" },
-          description: { type: "STRING" }
-        },
-        required: ["short_description", "description"]
-      }
-    }
-  }, {
-    headers: { 'Content-Type': 'application/json' }
-  });
-
-  console.log(`      🤖 [Gemini] Response in ${Date.now() - t1}ms`);
-
-  if (response.data?.candidates?.[0]?.content?.parts?.[0]) {
-    const text = response.data.candidates[0].content.parts[0].text;
-    return JSON.parse(text);
-  }
-
-  throw new Error('Invalid response from Gemini API');
+// ─────────────────────────────────────────────
+// Gemini Schema
+// ─────────────────────────────────────────────
+const WOO_PRODUCT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    short_description: { type: "STRING" },
+    description: { type: "STRING" }
+  },
+  required: ["short_description", "description"]
 };
 
 // ─────────────────────────────────────────────
@@ -58,17 +36,23 @@ const generateWooCommerceProduct = async (template, rowData, productType = 'simp
 
   if (!price) throw new Error('Price field is required for WooCommerce products');
 
-  const prompt = `You are a WooCommerce product content generator for tour packages.
+  const prompt = `You are a strict JSON data generator for WooCommerce products.
+Return a valid JSON object with EXACTLY two string keys: "short_description" and "description".
 
-TEMPLATE TO FOLLOW FOR DESCRIPTION:
+REQUIREMENT 1: "short_description"
+Write a 100-120 word SEO-friendly overview highlighting the journey for "${rowData.seo['Meta Title']}". Mention key attractions and natural beauty. This is for the product short description. Use the focus keyword "${rowData.seo['Focus Keywords']}" naturally.
+
+REQUIREMENT 2: "description"
+Write the detailed tour itinerary formatted purely in MARKDOWN (no HTML) following this exact user template:
 ${template.template}
 
-TOUR DATA:
-${JSON.stringify(rowData.content)}`;
+TOUR DATA PLACEMENTS FOR TEMPLATE:
+${JSON.stringify(rowData.content)}
+`;
 
-  const t = Date.now();
+  t = Date.now();
   console.log(`      🤖 [WooGen] Calling Gemini for product generation...`);
-  const aiData = await callGemini(prompt, geminiModel);
+  const aiData = await generateStructuredContent(prompt, geminiModel, WOO_PRODUCT_SCHEMA);
   console.log(`      🤖 [WooGen] Gemini done in ${Date.now() - t}ms`);
   console.log(`      🤖 [WooGen] short_description: ${aiData.short_description?.length || 0} chars | description: ${aiData.description?.length || 0} chars`);
 
@@ -77,8 +61,8 @@ ${JSON.stringify(rowData.content)}`;
     slug: rowData.seo['Slug'],
     type: productType,
     status: 'draft',
-    short_description: aiData.short_description || '',
-    description: aiData.description || '',
+    short_description: marked.parse(aiData.short_description || ''),
+    description: marked.parse(aiData.description || ''),
     price: String(price),
     regular_price: String(price),
     sku: String(sku),
@@ -111,6 +95,15 @@ const processExcel = async (req, res) => {
     const configuredPostType = postType || 'wordpress';
     const configuredProductType = wooProductType || 'simple';
     const configuredGeminiModel = geminiModel || DEFAULT_GEMINI_MODEL;
+
+    // Check for concurrent processing
+    const activeProcess = await ProcessHistory.findOne({ status: 'processing' });
+    if (activeProcess) {
+      return res.status(400).json({
+        success: false,
+        message: 'A file is already being processed. Please wait for it to finish or cancel it from the History page.'
+      });
+    }
 
     let wpConfig = null;
     let wooConfig = null;
@@ -210,10 +203,31 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
       field => !rowData.seo?.[field]
     );
 
+    // Warn about missing template placeholders (but do NOT block the row — Gemini handles them)
+    const placeholderRegex = /\{([^}]+)\}/g;
+    const templateContent = template.template || '';
+    let match;
+    const requiredPlaceholders = new Set();
+    while ((match = placeholderRegex.exec(templateContent)) !== null) {
+      if (match[1]) requiredPlaceholders.add(match[1]);
+    }
+
+    const missingPlaceholders = Array.from(requiredPlaceholders).filter(field => {
+      return !(
+        (rowData.content && rowData.content[field] !== undefined) ||
+        (rowData.seo && rowData.seo[field] !== undefined) ||
+        (rowData.product && rowData.product[field] !== undefined)
+      );
+    });
+
+    if (missingPlaceholders.length > 0) {
+      console.log(`   ⚠️  [Row ${rowNumber}] Template placeholders not matched (Gemini will handle): ${missingPlaceholders.join(', ')}`);
+    }
+
     if (missingFields.length > 0) {
       console.log(`   ⚠️  [Row ${rowNumber}] Skipped — Missing: ${missingFields.join(', ')}`);
       failedCount++;
-      failedRows.push({ rowNumber, rowData, error: `Missing SEO fields: ${missingFields.join(', ')}` });
+      failedRows.push({ rowNumber, rowData, error: `Missing required data: ${missingFields.join(', ')}` });
       await ProcessHistory.findByIdAndUpdate(processHistoryId, { successCount, failedCount, successRows, failedRows });
       continue;
     }
@@ -231,8 +245,8 @@ const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId
 
         t = Date.now();
         console.log(`   📰 [Row ${rowNumber}] [WP Step 2] Converting markdown to HTML...`);
-        const htmlContent = marked(markdownContent);
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 2] marked() done in ${Date.now() - t}ms`);
+        const htmlContent = marked.parse(markdownContent);
+        console.log(`   📰 [Row ${rowNumber}] [WP Step 2] marked.parse() done in ${Date.now() - t}ms`);
 
         const seoMeta = {
           _yoast_wpseo_title: rowData.seo['Meta Title'],
@@ -439,10 +453,43 @@ const stopProcess = async (req, res) => {
   }
 };
 
+// Stop ALL currently active processes (Emergency Kill Switch)
+const stopAllProcesses = async (req, res) => {
+  try {
+    const activeProcesses = await ProcessHistory.find({ status: 'processing' });
+
+    if (activeProcesses.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No active processes found to stop.'
+      });
+    }
+
+    const updatePromises = activeProcesses.map(process =>
+      ProcessHistory.findByIdAndUpdate(process._id, { shouldStop: true })
+    );
+
+    await Promise.all(updatePromises);
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully sent stop signal to ${activeProcesses.length} active process(es).`,
+      stoppedCount: activeProcesses.length
+    });
+  } catch (error) {
+    console.error('Error stopping all processes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to stop processes'
+    });
+  }
+};
+
 module.exports = {
   processExcel,
   getProcessStatus,
   getAllProcessHistory,
   retryFailedRows,
-  stopProcess
+  stopProcess,
+  stopAllProcesses
 };

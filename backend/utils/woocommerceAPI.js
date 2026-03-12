@@ -117,7 +117,8 @@ const createProduct = async (config, productData) => {
       message: 'Product created successfully'
     };
   } catch (error) {
-    throw new Error(`WooCommerce API error: ${error.response?.data?.message || error.message}`);
+    const detailMsg = extractWooError(error);
+    throw new Error(`WooCommerce API error: ${detailMsg}`);
   }
 };
 

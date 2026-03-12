@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { processAPI } from '../services/api';
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 
 const History = () => {
   const navigate = useNavigate();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,17 +30,54 @@ const History = () => {
     navigate(`/results/${processId}`);
   };
 
+  const handleStopProcess = async (processId) => {
+    try {
+      const ok = await confirm.confirm('Are you sure you want to stop this process? It will finish the current row and then halt.', {
+        confirmText: 'Stop Process',
+        confirmColor: 'bg-red-600 hover:bg-red-700',
+      });
+      if (!ok) return;
+      await processAPI.stopProcess(processId);
+      toast.showToast('Stop command sent.', 'success');
+      fetchHistory();
+    } catch (error) {
+      toast.showToast(error.response?.data?.message || 'Failed to stop process', 'error');
+      console.error(error);
+    }
+  };
+
+  const handleStopAll = async () => {
+    try {
+      const ok = await confirm.confirm('EMERGENCY STOP: Stop ALL currently active processes?', {
+        confirmText: 'Stop All',
+        confirmColor: 'bg-red-600 hover:bg-red-700',
+      });
+      if (!ok) return;
+      const res = await processAPI.stopAllProcesses();
+      if (res.data.stoppedCount > 0) {
+        toast.showToast(`Sent stop signal to ${res.data.stoppedCount} process(es).`, 'success');
+      } else {
+        toast.showToast('No active processes to stop.', 'info');
+      }
+      fetchHistory();
+    } catch (error) {
+      toast.showToast('Failed to stop all processes.', 'error');
+      console.error(error);
+    }
+  };
+
   const getStatusConfig = (status) => {
     const configs = {
       completed: { color: 'badge-success', label: 'Completed' },
       partial: { color: 'badge-warning', label: 'Partial' },
       failed: { color: 'badge-error', label: 'Failed' },
       processing: { color: 'badge-info', label: 'Processing' },
+      stopped: { color: 'bg-red-700 text-red-300 border border-red-600', label: 'Stopped' },
     };
     return configs[status] || configs.processing;
   };
 
-  if (loading) {
+  if (loading && history.length === 0) { // Only show full loading screen if no history is loaded yet
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -50,9 +91,32 @@ const History = () => {
   return (
     <div className="container mx-auto px-4 py-12">
       <div className="max-w-4xl mx-auto">
-        <div className="mb-12 animate-fade">
-          <h1 className="text-4xl font-bold text-slate-100">Processing History</h1>
-          <p className="text-slate-400 mt-2">View all your past content generation processes</p>
+        <div className="mb-12 animate-fade flex justify-between items-center">
+          <div>
+            <h1 className="text-4xl font-bold text-slate-100">Processing History</h1>
+            <p className="text-slate-400 mt-2">View all your past content generation processes</p>
+          </div>
+
+          <div className="flex gap-4 items-center">
+            {history.some(item => item.status === 'processing') && (
+              <button
+                onClick={handleStopAll}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white rounded-lg transition-colors border border-red-600/30"
+                title="Emergency Stop All Processes"
+              >
+                Stop All Active
+              </button>
+            )}
+            <button
+              onClick={() => {
+                fetchHistory();
+                toast.showToast('History refreshed', 'success');
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white rounded-lg transition-colors border border-slate-700 hover:border-slate-600"
+            >
+              🔄 Refresh
+            </button>
+          </div>
         </div>
 
         {history.length === 0 ? (
@@ -135,16 +199,30 @@ const History = () => {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewDetails(process._id);
-                    }}
-                    className="w-full bg-slate-800 text-cyan-300 border border-slate-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-slate-700 transition-all duration-300"
-                  >
-                    View Details
-                  </button>
+                  <div className="flex gap-3">
+                    {process.status === 'processing' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent triggering handleViewDetails
+                          handleStopProcess(process._id);
+                        }}
+                        className="w-1/3 bg-red-950/40 text-red-300 border border-red-900 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-red-900/60 transition-all duration-300"
+                      >
+                        Stop
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewDetails(process._id);
+                      }}
+                      className="flex-1 bg-slate-800 text-cyan-300 border border-slate-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-slate-700 transition-all duration-300"
+                    >
+                      View Details
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -160,13 +238,7 @@ const History = () => {
             >
               Process New File
             </button>
-            <button
-              type="button"
-              onClick={fetchHistory}
-              className="bg-slate-800 text-slate-200 border border-slate-700 rounded-lg font-semibold py-4 hover:bg-slate-700 transition-all duration-300"
-            >
-              Refresh
-            </button>
+            {/* The Refresh button is now part of the header, so this one is removed */}
           </div>
         )}
       </div>

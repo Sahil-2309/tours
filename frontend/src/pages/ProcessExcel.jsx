@@ -46,7 +46,27 @@ const ProcessExcel = () => {
   useEffect(() => {
     fetchTemplates();
     fetchProductTypes();
+    checkActiveProcess();
   }, []);
+
+  const checkActiveProcess = async () => {
+    try {
+      const response = await processAPI.getHistory();
+      const historyItems = response.data.data;
+      if (historyItems && historyItems.length > 0) {
+        // Find if there is any active process
+        const activeProcess = historyItems.find(p => p.status === 'processing');
+        if (activeProcess) {
+          setProcessId(activeProcess._id);
+          setProcessing(true);
+          setStatus(activeProcess);
+          // Auto-resume tracking via the existing interval
+        }
+      }
+    } catch (error) {
+      console.error('Error checking active process:', error);
+    }
+  };
 
   useEffect(() => {
     let interval;
@@ -288,11 +308,10 @@ const ProcessExcel = () => {
                   {GEMINI_MODELS.map((m) => (
                     <label
                       key={m.id}
-                      className={`p-4 rounded-lg cursor-pointer border-2 transition-all duration-300 flex items-center justify-between ${
-                        geminiModel === m.id
-                          ? 'border-cyan-500 bg-slate-800'
-                          : 'border-slate-700 hover:border-cyan-500 bg-slate-900'
-                      }`}
+                      className={`p-4 rounded-lg cursor-pointer border-2 transition-all duration-300 flex items-center justify-between ${geminiModel === m.id
+                        ? 'border-cyan-500 bg-slate-800'
+                        : 'border-slate-700 hover:border-cyan-500 bg-slate-900'
+                        }`}
                     >
                       <input
                         type="radio"
@@ -326,11 +345,10 @@ const ProcessExcel = () => {
                   ].map((option) => (
                     <label
                       key={option.value}
-                      className={`p-4 rounded-lg cursor-pointer border-2 transition-all duration-300 ${
-                        postType === option.value
-                          ? 'border-cyan-500 bg-slate-800'
-                          : 'border-slate-700 hover:border-cyan-500 bg-slate-900'
-                      }`}
+                      className={`p-4 rounded-lg cursor-pointer border-2 transition-all duration-300 ${postType === option.value
+                        ? 'border-cyan-500 bg-slate-800'
+                        : 'border-slate-700 hover:border-cyan-500 bg-slate-900'
+                        }`}
                     >
                       <input
                         type="radio"
@@ -374,13 +392,12 @@ const ProcessExcel = () => {
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${
-                    isDragging
-                      ? 'border-cyan-500 bg-slate-800'
-                      : file
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${isDragging
+                    ? 'border-cyan-500 bg-slate-800'
+                    : file
                       ? 'border-emerald-500 bg-emerald-950/30'
                       : 'border-slate-700 hover:border-slate-500 bg-slate-900'
-                  }`}
+                    }`}
                 >
                   <input
                     type="file"

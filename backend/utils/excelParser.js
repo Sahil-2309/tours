@@ -50,24 +50,44 @@ const parseExcel = (fileBuffer) => {
     const worksheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-    return jsonData.map((row, index) => {
-      const seo = {};
-      const content = {};
-      const product = {};
-      const postType = row['Post Type'] || 'wordpress';
+    // Column aliases: map alternate names to canonical names
+    const COLUMN_ALIASES = {
+      'Main Title': 'Meta Title',
+      'Title': 'Meta Title',
+      'Tour Title': 'Meta Title',
+      'Description': 'Meta Description',
+      'Keywords': 'Focus Keywords',
+      'Focus Keyword': 'Focus Keywords',
+    };
 
+    return jsonData.map((row, index) => {
+      // Apply column aliases first
+      const normalizedRow = {};
       Object.keys(row).forEach((key) => {
-        if (MANDATORY_SEO_FIELDS.includes(key) || OPTIONAL_SEO_FIELDS.includes(key)) {
-          seo[key] = row[key] ?? DEFAULT_VALUES[key];
-        } else if (PRODUCT_FIELDS.includes(key)) {
-          product[key] = row[key] ?? DEFAULT_VALUES[key];
-        } else if (key !== 'Post Type') {
-          content[key] = row[key];
+        const canonicalKey = COLUMN_ALIASES[key] || key;
+        // Don't overwrite if canonical key already exists
+        if (!(canonicalKey in normalizedRow)) {
+          normalizedRow[canonicalKey] = row[key];
         }
       });
 
-      seo['Meta Title'] = seo['Meta Title'] || content['Title'] || content['Name'] || '';
-      seo['Slug'] = seo['Slug'] || generateSlug(seo['Meta Title'] || content['Title'] || content['Name']);
+      const seo = {};
+      const content = {};
+      const product = {};
+      const postType = normalizedRow['Post Type'] || 'wordpress';
+
+      Object.keys(normalizedRow).forEach((key) => {
+        if (MANDATORY_SEO_FIELDS.includes(key) || OPTIONAL_SEO_FIELDS.includes(key)) {
+          seo[key] = normalizedRow[key] ?? DEFAULT_VALUES[key];
+        } else if (PRODUCT_FIELDS.includes(key)) {
+          product[key] = normalizedRow[key] ?? DEFAULT_VALUES[key];
+        } else if (key !== 'Post Type') {
+          content[key] = normalizedRow[key];
+        }
+      });
+
+      seo['Meta Title'] = seo['Meta Title'] || content['Tour Name'] || content['Title'] || content['Name'] || '';
+      seo['Slug'] = seo['Slug'] || generateSlug(seo['Meta Title'] || content['Tour Name'] || content['Title'] || content['Name']);
       seo['Meta Description'] =
         seo['Meta Description'] || truncate(content['Content'] || content['Description'] || '');
 
@@ -89,7 +109,7 @@ const parseExcel = (fileBuffer) => {
         content,
         product,
         postType,
-        rawData: row
+        rawData: normalizedRow
       };
     });
   } catch (error) {

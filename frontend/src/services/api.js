@@ -49,6 +49,7 @@ export const processAPI = {
   getHistory: () => api.get('/process/history'),
   retryFailed: (processId) => api.post('/process/retry', { processId }),
   stopProcess: (processId) => api.post('/process/stop', { processId }),
+  stopAllProcesses: () => api.post('/process/stop-all'),
 };
 
 // Health check
