@@ -173,203 +173,220 @@ const processExcel = async (req, res) => {
 const processRows = async (rows, template, wpConfig, wooConfig, processHistoryId, postType = 'wordpress', wooProductType = 'simple', geminiModel = DEFAULT_GEMINI_MODEL) => {
   let successCount = 0;
   let failedCount = 0;
+  let failureReason = null;
   const failedRows = [];
   const successRows = [];
 
   console.log(`\n⚙️  [processRows] START — Total rows: ${rows.length} | postType: ${postType} | model: ${geminiModel}`);
   const batchStart = Date.now();
 
-  for (let i = 0; i < rows.length; i++) {
-    const rowStart = Date.now();
-    const rowNumber = i + 1;
-    const rowData = rows[i];
+  try {
+    for (let i = 0; i < rows.length; i++) {
+      const rowStart = Date.now();
+      const rowNumber = i + 1;
+      const rowData = rows[i];
 
-    console.log(`\n─────────────────────────────────────`);
-    console.log(`📝 [Row ${rowNumber}/${rows.length}] START — "${rowData.seo?.['Meta Title'] || 'N/A'}"`);
+      console.log(`\n─────────────────────────────────────`);
+      console.log(`📝 [Row ${rowNumber}/${rows.length}] START — "${rowData.seo?.['Meta Title'] || 'N/A'}"`);
 
-    // ─── Stop check ───
-    let t = Date.now();
-    console.log(`   🔍 [Row ${rowNumber}] Checking stop flag in DB...`);
-    const processDoc = await ProcessHistory.findById(processHistoryId);
-    console.log(`   🔍 [Row ${rowNumber}] Stop check done in ${Date.now() - t}ms`);
+      // ─── Stop check ───
+      let t = Date.now();
+      console.log(`   🔍 [Row ${rowNumber}] Checking stop flag in DB...`);
+      const processDoc = await ProcessHistory.findById(processHistoryId);
+      console.log(`   🔍 [Row ${rowNumber}] Stop check done in ${Date.now() - t}ms`);
 
-    if (processDoc?.shouldStop) {
-      console.log('🛑 Processing stopped by user');
-      break;
-    }
+      if (processDoc?.shouldStop || processDoc?.status === 'stopped') {
+        console.log('🛑 Processing stopped by user');
+        break;
+      }
 
-    // ─── Validation ───
-    const missingFields = ['Meta Title', 'Meta Description', 'Focus Keywords', 'Slug'].filter(
-      field => !rowData.seo?.[field]
-    );
-
-    // Warn about missing template placeholders (but do NOT block the row — Gemini handles them)
-    const placeholderRegex = /\{([^}]+)\}/g;
-    const templateContent = template.template || '';
-    let match;
-    const requiredPlaceholders = new Set();
-    while ((match = placeholderRegex.exec(templateContent)) !== null) {
-      if (match[1]) requiredPlaceholders.add(match[1]);
-    }
-
-    const missingPlaceholders = Array.from(requiredPlaceholders).filter(field => {
-      return !(
-        (rowData.content && rowData.content[field] !== undefined) ||
-        (rowData.seo && rowData.seo[field] !== undefined) ||
-        (rowData.product && rowData.product[field] !== undefined)
+      // ─── Validation ───
+      const missingFields = ['Meta Title', 'Meta Description', 'Focus Keywords', 'Slug'].filter(
+        field => !rowData.seo?.[field]
       );
+
+      // Warn about missing template placeholders (but do NOT block the row — Gemini handles them)
+      const placeholderRegex = /\{([^}]+)\}/g;
+      const templateContent = template.template || '';
+      let match;
+      const requiredPlaceholders = new Set();
+      while ((match = placeholderRegex.exec(templateContent)) !== null) {
+        if (match[1]) requiredPlaceholders.add(match[1]);
+      }
+
+      const missingPlaceholders = Array.from(requiredPlaceholders).filter(field => {
+        return !(
+          (rowData.content && rowData.content[field] !== undefined) ||
+          (rowData.seo && rowData.seo[field] !== undefined) ||
+          (rowData.product && rowData.product[field] !== undefined)
+        );
+      });
+
+      if (missingPlaceholders.length > 0) {
+        console.log(`   ⚠️  [Row ${rowNumber}] Template placeholders not matched (Gemini will handle): ${missingPlaceholders.join(', ')}`);
+      }
+
+      if (missingFields.length > 0) {
+        console.log(`   ⚠️  [Row ${rowNumber}] Skipped — Missing: ${missingFields.join(', ')}`);
+        failedCount++;
+        failedRows.push({ rowNumber, rowData, error: `Missing required data: ${missingFields.join(', ')}` });
+        await ProcessHistory.findByIdAndUpdate(processHistoryId, { successCount, failedCount, successRows, failedRows });
+        continue;
+      }
+
+      // ─── WordPress ───
+      let wpResult = null;
+      let wpError = null;
+
+      if (postType === 'wordpress' || postType === 'both') {
+        try {
+          t = Date.now();
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 1] Calling generateContent (Gemini for WP)...`);
+          const markdownContent = await generateContent(template.template, rowData.content, geminiModel);
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 1] generateContent done in ${Date.now() - t}ms`);
+
+          t = Date.now();
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 2] Converting markdown to HTML...`);
+          const htmlContent = marked.parse(markdownContent);
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 2] marked.parse() done in ${Date.now() - t}ms`);
+
+          const seoMeta = {
+            _yoast_wpseo_title: rowData.seo['Meta Title'],
+            _yoast_wpseo_metadesc: rowData.seo['Meta Description'],
+            _yoast_wpseo_focuskw: rowData.seo['Focus Keywords']
+          };
+
+          if (rowData.seo['OG Image URL']) {
+            seoMeta._yoast_wpseo_opengraph_image = rowData.seo['OG Image URL'];
+          }
+
+          const postData = {
+            title: rowData.seo['Meta Title'],
+            content: htmlContent,
+            slug: rowData.seo['Slug'],
+            meta: seoMeta
+          };
+
+          t = Date.now();
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 3] Creating WordPress post...`);
+          wpResult = await createPost(wpConfig, postData);
+          console.log(`   📰 [Row ${rowNumber}] [WP Step 3] WordPress post created in ${Date.now() - t}ms — ${wpResult.postUrl}`);
+        } catch (error) {
+          wpError = error.message;
+          console.log(`   ❌ [Row ${rowNumber}] WordPress FAILED: ${error.message}`);
+        }
+      }
+
+      // ─── WooCommerce ───
+      let wooResult = null;
+      let wooError = null;
+
+      if (postType === 'woocommerce' || postType === 'both') {
+        try {
+          t = Date.now();
+          console.log(`   🛒 [Row ${rowNumber}] [Woo Step 1] Generating WooCommerce product (Gemini)...`);
+          const productData = await generateWooCommerceProduct(template, rowData, wooProductType, geminiModel);
+          console.log(`   🛒 [Row ${rowNumber}] [Woo Step 1] Product generated in ${Date.now() - t}ms`);
+
+          const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
+          const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
+          const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
+
+          if (!siteUrl || !consumerKey || !consumerSecret) {
+            throw new Error('WooCommerce credentials not configured');
+          }
+
+          const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+
+          t = Date.now();
+          console.log(`   🛒 [Row ${rowNumber}] [Woo Step 2] POSTing product to WooCommerce API...`);
+          const wooResponse = await axios.post(
+            `${siteUrl}/wp-json/wc/v3/products`,
+            productData,
+            { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' } }
+          );
+          console.log(`   🛒 [Row ${rowNumber}] [Woo Step 2] WooCommerce API responded in ${Date.now() - t}ms`);
+
+          const created = wooResponse.data;
+          wooResult = {
+            productId: created.id,
+            productUrl: created.permalink,
+            price: created.price,
+            slug: created.slug
+          };
+
+          console.log(`   🛒 [Row ${rowNumber}] Product created — ID: ${created.id} | URL: ${created.permalink}`);
+        } catch (error) {
+          wooError = error.message;
+          console.log(`   ❌ [Row ${rowNumber}] WooCommerce FAILED: ${error.message}`);
+        }
+      }
+
+      // ─── Result ───
+      const rowFailed = (postType === 'both')
+        ? (!wpResult && !wooResult)
+        : (postType === 'wordpress' ? !wpResult : !wooResult);
+
+      if (rowFailed) {
+        failedCount++;
+        const errors = [];
+        if (wpError) errors.push(`WordPress: ${wpError}`);
+        if (wooError) errors.push(`WooCommerce: ${wooError}`);
+        failedRows.push({ rowNumber, rowData, error: errors.join(' | ') });
+        console.log(`   ❌ [Row ${rowNumber}] FAILED — ${errors.join(' | ')}`);
+      } else {
+        successCount++;
+        const entry = { rowNumber, postType, seoTitle: rowData.seo['Meta Title'] };
+        if (wpResult) { entry.postId = wpResult.postId; entry.postUrl = wpResult.postUrl; }
+        if (wooResult) { entry.productId = wooResult.productId; entry.productUrl = wooResult.productUrl; }
+        if (wpError) entry.wpError = wpError;
+        if (wooError) entry.wooError = wooError;
+        successRows.push(entry);
+        console.log(`   ✅ [Row ${rowNumber}] SUCCESS`);
+      }
+
+      // ─── DB Update ───
+      t = Date.now();
+      console.log(`   💾 [Row ${rowNumber}] Saving progress to DB...`);
+      await ProcessHistory.findByIdAndUpdate(processHistoryId, { successCount, failedCount, successRows, failedRows });
+      console.log(`   💾 [Row ${rowNumber}] DB saved in ${Date.now() - t}ms`);
+
+      console.log(`⏱️  [Row ${rowNumber}] Total row time: ${Date.now() - rowStart}ms`);
+
+      // ─── Delay ───
+      console.log(`   ⏳ [Row ${rowNumber}] Waiting 1s before next row...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } catch (error) {
+    console.error(`❌ [processRows] FATAL ERROR:`, error);
+    failureReason = error.message;
+  } finally {
+    // ─── Final Sync ───
+    console.log(`\n💾 [processRows] FINALIZING — Saving final status to DB...`);
+    const processDoc = await ProcessHistory.findById(processHistoryId);
+    
+    let finalStatus = 'completed';
+    // If it was already marked as stopped (e.g. by aggressive stop), keep it stopped
+    if (processDoc?.shouldStop || processDoc?.status === 'stopped') {
+      finalStatus = 'stopped';
+    } else if (failureReason) {
+      finalStatus = 'failed';
+    } else if (failedCount > 0) {
+      finalStatus = successCount > 0 ? 'partial' : 'failed';
+    }
+
+    await ProcessHistory.findByIdAndUpdate(processHistoryId, {
+      status: finalStatus,
+      completedAt: new Date(),
+      // Ensure counts are consistent with latest in-memory state
+      successCount,
+      failedCount,
+      successRows,
+      failedRows
     });
 
-    if (missingPlaceholders.length > 0) {
-      console.log(`   ⚠️  [Row ${rowNumber}] Template placeholders not matched (Gemini will handle): ${missingPlaceholders.join(', ')}`);
-    }
-
-    if (missingFields.length > 0) {
-      console.log(`   ⚠️  [Row ${rowNumber}] Skipped — Missing: ${missingFields.join(', ')}`);
-      failedCount++;
-      failedRows.push({ rowNumber, rowData, error: `Missing required data: ${missingFields.join(', ')}` });
-      await ProcessHistory.findByIdAndUpdate(processHistoryId, { successCount, failedCount, successRows, failedRows });
-      continue;
-    }
-
-    // ─── WordPress ───
-    let wpResult = null;
-    let wpError = null;
-
-    if (postType === 'wordpress' || postType === 'both') {
-      try {
-        t = Date.now();
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 1] Calling generateContent (Gemini for WP)...`);
-        const markdownContent = await generateContent(template.template, rowData.content, geminiModel);
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 1] generateContent done in ${Date.now() - t}ms`);
-
-        t = Date.now();
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 2] Converting markdown to HTML...`);
-        const htmlContent = marked.parse(markdownContent);
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 2] marked.parse() done in ${Date.now() - t}ms`);
-
-        const seoMeta = {
-          _yoast_wpseo_title: rowData.seo['Meta Title'],
-          _yoast_wpseo_metadesc: rowData.seo['Meta Description'],
-          _yoast_wpseo_focuskw: rowData.seo['Focus Keywords']
-        };
-
-        if (rowData.seo['OG Image URL']) {
-          seoMeta._yoast_wpseo_opengraph_image = rowData.seo['OG Image URL'];
-        }
-
-        const postData = {
-          title: rowData.seo['Meta Title'],
-          content: htmlContent,
-          slug: rowData.seo['Slug'],
-          meta: seoMeta
-        };
-
-        t = Date.now();
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 3] Creating WordPress post...`);
-        wpResult = await createPost(wpConfig, postData);
-        console.log(`   📰 [Row ${rowNumber}] [WP Step 3] WordPress post created in ${Date.now() - t}ms — ${wpResult.postUrl}`);
-      } catch (error) {
-        wpError = error.message;
-        console.log(`   ❌ [Row ${rowNumber}] WordPress FAILED: ${error.message}`);
-      }
-    }
-
-    // ─── WooCommerce ───
-    let wooResult = null;
-    let wooError = null;
-
-    if (postType === 'woocommerce' || postType === 'both') {
-      try {
-        t = Date.now();
-        console.log(`   🛒 [Row ${rowNumber}] [Woo Step 1] Generating WooCommerce product (Gemini)...`);
-        const productData = await generateWooCommerceProduct(template, rowData, wooProductType, geminiModel);
-        console.log(`   🛒 [Row ${rowNumber}] [Woo Step 1] Product generated in ${Date.now() - t}ms`);
-
-        const siteUrl = wooConfig.siteUrl || process.env.WOOCOMMERCE_SITE_URL;
-        const consumerKey = wooConfig.consumerKey || process.env.WOOCOMMERCE_CONSUMER_KEY;
-        const consumerSecret = wooConfig.consumerSecret || process.env.WOOCOMMERCE_CONSUMER_SECRET;
-
-        if (!siteUrl || !consumerKey || !consumerSecret) {
-          throw new Error('WooCommerce credentials not configured');
-        }
-
-        const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-
-        t = Date.now();
-        console.log(`   🛒 [Row ${rowNumber}] [Woo Step 2] POSTing product to WooCommerce API...`);
-        const wooResponse = await axios.post(
-          `${siteUrl}/wp-json/wc/v3/products`,
-          productData,
-          { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json' } }
-        );
-        console.log(`   🛒 [Row ${rowNumber}] [Woo Step 2] WooCommerce API responded in ${Date.now() - t}ms`);
-
-        const created = wooResponse.data;
-        wooResult = {
-          productId: created.id,
-          productUrl: created.permalink,
-          price: created.price,
-          slug: created.slug
-        };
-
-        console.log(`   🛒 [Row ${rowNumber}] Product created — ID: ${created.id} | URL: ${created.permalink}`);
-      } catch (error) {
-        wooError = error.message;
-        console.log(`   ❌ [Row ${rowNumber}] WooCommerce FAILED: ${error.message}`);
-      }
-    }
-
-    // ─── Result ───
-    const rowFailed = (postType === 'both')
-      ? (!wpResult && !wooResult)
-      : (postType === 'wordpress' ? !wpResult : !wooResult);
-
-    if (rowFailed) {
-      failedCount++;
-      const errors = [];
-      if (wpError) errors.push(`WordPress: ${wpError}`);
-      if (wooError) errors.push(`WooCommerce: ${wooError}`);
-      failedRows.push({ rowNumber, rowData, error: errors.join(' | ') });
-      console.log(`   ❌ [Row ${rowNumber}] FAILED — ${errors.join(' | ')}`);
-    } else {
-      successCount++;
-      const entry = { rowNumber, postType, seoTitle: rowData.seo['Meta Title'] };
-      if (wpResult) { entry.postId = wpResult.postId; entry.postUrl = wpResult.postUrl; }
-      if (wooResult) { entry.productId = wooResult.productId; entry.productUrl = wooResult.productUrl; }
-      if (wpError) entry.wpError = wpError;
-      if (wooError) entry.wooError = wooError;
-      successRows.push(entry);
-      console.log(`   ✅ [Row ${rowNumber}] SUCCESS`);
-    }
-
-    // ─── DB Update ───
-    t = Date.now();
-    console.log(`   💾 [Row ${rowNumber}] Saving progress to DB...`);
-    await ProcessHistory.findByIdAndUpdate(processHistoryId, { successCount, failedCount, successRows, failedRows });
-    console.log(`   💾 [Row ${rowNumber}] DB saved in ${Date.now() - t}ms`);
-
-    console.log(`⏱️  [Row ${rowNumber}] Total row time: ${Date.now() - rowStart}ms`);
-
-    // ─── Delay ───
-    console.log(`   ⏳ [Row ${rowNumber}] Waiting 1s before next row...`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log(`🏁 [processRows] DONE — ${successCount} success | ${failedCount} failed | Status: ${finalStatus} | Total time: ${Date.now() - batchStart}ms`);
   }
-
-  // ─── Final ───
-  const processDoc = await ProcessHistory.findById(processHistoryId);
-  let finalStatus = 'completed';
-  if (processDoc?.shouldStop) finalStatus = 'stopped';
-  else if (failedCount === 0) finalStatus = 'completed';
-  else if (successCount === 0) finalStatus = 'failed';
-  else finalStatus = 'partial';
-
-  await ProcessHistory.findByIdAndUpdate(processHistoryId, {
-    status: finalStatus,
-    completedAt: new Date()
-  });
-
-  console.log(`\n🏁 [processRows] DONE — ${successCount} success | ${failedCount} failed | Status: ${finalStatus} | Total time: ${Date.now() - batchStart}ms`);
 };
 
 const getProcessStatus = async (req, res) => {
@@ -446,8 +463,14 @@ const stopProcess = async (req, res) => {
     if (!process) return res.status(404).json({ success: false, message: 'Process not found' });
     if (process.status !== 'processing') return res.status(400).json({ success: false, message: 'Process is not currently running' });
 
-    await ProcessHistory.findByIdAndUpdate(processId, { shouldStop: true });
-    res.json({ success: true, message: 'Stop command sent. Processing will stop after current row.' });
+    // Aggressive Stop: Set status to stopped immediately to clear zombies
+    await ProcessHistory.findByIdAndUpdate(processId, { 
+      shouldStop: true, 
+      status: 'stopped',
+      completedAt: new Date()
+    });
+
+    res.json({ success: true, message: 'Stop command sent. Process marked as stopped.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -456,25 +479,20 @@ const stopProcess = async (req, res) => {
 // Stop ALL currently active processes (Emergency Kill Switch)
 const stopAllProcesses = async (req, res) => {
   try {
-    const activeProcesses = await ProcessHistory.find({ status: 'processing' });
-
-    if (activeProcesses.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'No active processes found to stop.'
-      });
-    }
-
-    const updatePromises = activeProcesses.map(process =>
-      ProcessHistory.findByIdAndUpdate(process._id, { shouldStop: true })
+    // Aggressive Stop All: Use updateMany for atomic clearing of all zombies
+    const result = await ProcessHistory.updateMany(
+      { status: 'processing' },
+      { 
+        shouldStop: true, 
+        status: 'stopped',
+        completedAt: new Date()
+      }
     );
-
-    await Promise.all(updatePromises);
 
     res.status(200).json({
       success: true,
-      message: `Successfully sent stop signal to ${activeProcesses.length} active process(es).`,
-      stoppedCount: activeProcesses.length
+      message: `Successfully stopped ${result.modifiedCount} active process(es).`,
+      stoppedCount: result.modifiedCount
     });
   } catch (error) {
     console.error('Error stopping all processes:', error);
