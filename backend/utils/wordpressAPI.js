@@ -9,18 +9,32 @@ const axios = require('axios');
  */
 const normalizeUrl = (url) => (url || '').trim().replace(/\/+$/, '');
 
+// LiteSpeed & proxy-safe auth headers
+const authHeaders = (username, appPassword) => {
+  // Strip spaces — WP app passwords work with or without, but stripping avoids encoding issues
+  const cleanPassword = (appPassword || '').replace(/\s+/g, '');
+  const auth = Buffer.from(`${username}:${cleanPassword}`).toString('base64');
+  return {
+    'Authorization': `Basic ${auth}`,
+    // Bypass LiteSpeed / CDN cache so auth header actually reaches PHP
+    'Cache-Control': 'no-cache, no-store',
+    'Pragma': 'no-cache',
+    'X-No-Cache': '1'
+  };
+};
+
 const testConnection = async (siteUrl, username, appPassword) => {
   try {
     const base = normalizeUrl(siteUrl);
-    const url = `${base}/wp-json/wp/v2/users/me`;
-    const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Authorization': `Basic ${auth}`
-      }
-    });
-    
+    // Append random param to bypass LiteSpeed/CDN edge cache
+    // LiteSpeed ignores Cache-Control headers but can't cache a unique URL
+    const url = `${base}/wp-json/wp/v2/users/me?_nocache=${Date.now()}`;
+
+    const headers = authHeaders(username, appPassword);
+
+    const response = await axios.get(url, { headers });
+
+    console.log('[WP DEBUG] SUCCESS - User:', response.data.name, '| Roles:', response.data.roles);
     return {
       success: true,
       message: 'Connection successful',
@@ -61,12 +75,11 @@ const createPost = async (config, postData) => {
   const { siteUrl, username, appPassword } = config;
   const base = normalizeUrl(siteUrl);
   const url = `${base}/wp-json/wp/v2/posts`;
-  const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
 
   const tryCreate = (payload) =>
     axios.post(url, payload, {
       headers: {
-        'Authorization': `Basic ${auth}`,
+        ...authHeaders(username, appPassword),
         'Content-Type': 'application/json'
       }
     });
@@ -130,16 +143,16 @@ const createPost = async (config, postData) => {
 const updatePost = async (config, postId, postData) => {
   try {
     const { siteUrl, username, appPassword } = config;
-    const url = `${siteUrl}/wp-json/wp/v2/posts/${postId}`;
-    const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
-    
+    const base = normalizeUrl(siteUrl);
+    const url = `${base}/wp-json/wp/v2/posts/${postId}`;
+
     const response = await axios.post(url, postData, {
       headers: {
-        'Authorization': `Basic ${auth}`,
+        ...authHeaders(username, appPassword),
         'Content-Type': 'application/json'
       }
     });
-    
+
     return {
       success: true,
       postId: response.data.id,
